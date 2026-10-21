@@ -1,0 +1,10 @@
+// FM-1 Bluetooth bridge: let the bridge user's PipeWire run its audio threads in real time.
+// A headless Pi has no active desktop session, and RealtimeKit's default policy only grants
+// real-time priority to one. Installed to /etc/polkit-1/rules.d/ (FM1_USER is filled in).
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.freedesktop.RealtimeKit1.acquire-real-time" ||
+         action.id == "org.freedesktop.RealtimeKit1.acquire-high-priority") &&
+        subject.user == "FM1_USER") {
+        return polkit.Result.YES;
+    }
+});
