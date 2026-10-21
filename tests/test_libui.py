@@ -119,9 +119,12 @@ def test_flows():
     assert app.pick["items"][0][0] == "Get SLOOP update"
     snap(app, "firmware-pick")
     keys(app, "press")
-    assert app.started[-1] == ["fetch-sloop"]
-    app.screen = "pick"
+    assert app.started[-1] == ["fetch", "sloop"]
+    app.screen, app.pick["cursor"] = "pick", 0
     keys(app, "down", "press")
+    assert app.started[-1] == ["fetch", "clipper"]
+    app.screen, app.pick["cursor"] = "pick", 0
+    keys(app, "down", "down", "press")
     snap(app, "firmware-confirm")
     keys(app, "press!")
     assert app.started[-1][0] == "flash" and app.started[-1][1].endswith("sloop-2.8.fwsc")

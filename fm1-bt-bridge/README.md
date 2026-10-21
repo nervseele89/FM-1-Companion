@@ -123,6 +123,15 @@ The box talks to SLOOP (2.3 or later) the way SLOOP's own web editor does, over 
 Its backups are **SLOOP backup files** (`sloop-backup` JSON): they open in SLOOP's web editor, and
 backups made there can be restored from the box.
 
+**SLOOP or Clipper:** both are isod89's firmwares, based on Felucca. [SLOOP](https://github.com/isod89/sloop-fm1)
+is a groovebox (tracks, drums, songs, samples); [Clipper](https://github.com/isod89/clipper-fm1) is a
+synthesizer (23 engines, one instrument) and is **experimental**: its own README says it has run very little
+on a real FM-1. The box installs either and switches between them (the file of the other one stays in the
+library, so you can always go back). Backups, projects and samples belong to the firmware they came from:
+the box refuses to put a SLOOP backup or project onto Clipper, or the other way round, and Clipper has
+wavetable slots instead of sample slots (use Clipper's web editor for those). Backing up and restoring
+Clipper's own data works the same way as SLOOP's.
+
 **On the box:** Settings → **Library**:
 
 ![Library](../docs/images/screen-library.png)
@@ -133,7 +142,7 @@ backups made there can be restored from the box.
 | **Restore ›** | Pick a backup; it replaces what's on the FM-1. |
 | **Load project ›** | Pick a project file, or a project inside any backup, then where it goes: the working project or A–D. |
 | **Load sample ›** | Pick a WAV, then a slot (USR1–4). |
-| **Firmware ›** | Pick a firmware file to install; **Get SLOOP update** (with Wi-Fi on) downloads the newest SLOOP release from GitHub first. |
+| **Firmware ›** | Pick a firmware file to install. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
 | **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
 | **Auto backup** | Press to choose: **off**, **at start**, or every **2**, **5**, **10** or **30 min**. Remembered. |
 

@@ -11,9 +11,10 @@ Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, connected to the FM-1 by USB
 - **MIDI in and out:** the Pi shows up as a Bluetooth MIDI device, **"FM-1 Bridge"**, so a
   keyboard, iPad, phone or computer can play the FM-1 wirelessly and receive what it sends.
 - **A library for the FM-1 (v2, SLOOP 2.3+):** back up and restore everything on it, load projects and
-  samples, and install firmware (it downloads SLOOP updates itself), from the box or from a web page on
-  your phone. No computer needed. Backups are SLOOP's own backup files, so they also open in SLOOP's
-  web editor.
+  samples, and install firmware (it downloads [SLOOP](https://github.com/isod89/sloop-fm1) and, if you
+  want it, isod89's experimental synthesizer firmware [Clipper](https://github.com/isod89/clipper-fm1)),
+  from the box or from a web page on your phone. No computer needed. Backups are SLOOP's own backup files,
+  so they also open in SLOOP's web editor.
 - **Its own screen and controls:** status, pairing, settings and the library on the HAT's OLED, keys and
   joystick.
 

@@ -198,6 +198,42 @@ def test_timed_backups_skip_unchanged():
     assert library.read_state()["result"].get("unchanged") is None
 
 
+def test_sloop_and_clipper_dont_mix():
+    assert sloop.family("FELUCCA SLOOP 2.8") == "sloop" and sloop.family("clipper-1.1-experimental.fwsc") == "clipper"
+    assert sloop.family("FELUCCA 1.6") is None
+    sloop_backup = device()[1].backup()
+    clipper, dev = device(version="FELUCCA CLIPPER 1.1", pcount=126, proto=14)
+    before = dict(clipper.objects)
+    for attempt in (lambda: dev.restore(sloop_backup),
+                    lambda: dev.put_project(sloop.project_from(sloop_backup, "A"), "working",
+                                            firmware=sloop_backup["firmware"]),
+                    lambda: dev.load_samples(0, "x", [write_wav(TMP / "c.wav", 0.1)])):
+        try:
+            attempt()
+            raise AssertionError("SLOOP data went onto Clipper")
+        except sloop.SloopError as e:
+            assert e.code == "family", e
+    assert clipper.objects == before                       # nothing was written
+    dev.restore(dev.backup())                              # Clipper's own backup: fine
+    # the library jobs refuse before they make a safety backup
+    use(clipper)
+    path = library.write_backup(sloop_backup, "manual")
+    count = len(list((TMP / "library" / "backups").glob("*.json")))
+    assert library.main(["restore", str(path)]) == 1 and "Clipper" in library.read_state()["message"]
+    assert len(list((TMP / "library" / "backups").glob("*.json"))) == count
+
+
+def test_newest_firmware_release():
+    releases = [{"tag_name": "v1.2", "draft": True, "assets": [{"name": "c-1.2.fwsc"}]},
+                {"tag_name": "v1.1-experimental", "prerelease": True,
+                 "assets": [{"name": "demo.wav"}, {"name": "clipper-1.1-experimental.fwsc"}]},
+                {"tag_name": "v1.0", "assets": [{"name": "clipper-1.0.fwsc"}]}]
+    release, asset = library.newest_firmware(releases)
+    assert release["tag_name"] == "v1.1-experimental" and asset["name"] == "clipper-1.1-experimental.fwsc"
+    assert library.newest_firmware([{"assets": [{"name": "x.wav"}]}]) == (None, None)
+    assert set(library.FIRMWARES) == {"sloop", "clipper"}
+
+
 def test_job_errors_are_reported():
     fake = fake_fm1.FakeFM1()
     use(fake)

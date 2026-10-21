@@ -158,8 +158,9 @@ class LibraryScreens:
             self.open_pick("Sample", items, self.pick_sample, "No WAV files yet")
         elif key == "firmware":
             items = [(Path(f["name"]).stem, "", f["name"]) for f in listing["firmware"]]
-            if self.wifi:
-                items.insert(0, ("Get SLOOP update", "web", None))
+            if self.wifi:                     # isod89's two firmwares, from their GitHub releases
+                items[:0] = [("Get SLOOP update", "web", ("fetch", "sloop")),
+                             ("Get Clipper (exp.)", "web", ("fetch", "clipper"))]
             self.open_pick("Firmware", items, self.pick_firmware, "No firmware: Wi-Fi on for download")
         elif key == "sd":
             try:
@@ -220,12 +221,15 @@ class LibraryScreens:
                                                                      str(path)], "Load sample")),
                        "", back="pick")
 
-    def pick_firmware(self, name):
-        if name is None:
-            self.start_job(["fetch-sloop"], "SLOOP update")
+    def pick_firmware(self, choice):
+        if isinstance(choice, tuple):         # ("fetch", "sloop" / "clipper")
+            title = library.FIRMWARES[choice[1]][0]
+            self.start_job(["fetch", choice[1]], f"Get {title}")
             return
-        path = library.folder("firmware") / name
-        self.ask("Install?", [Path(name).stem[:20], "Keep the FM-1 plugged in", "(backed up first)"],
+        path = library.folder("firmware") / choice
+        warning = ("Experimental: see its README" if library.sloop.family(choice) == "clipper"
+                   else "Keep the FM-1 plugged in")
+        self.ask("Install?", [Path(choice).stem[:20], warning, "(backed up first)"],
                  lambda: self.start_job(["flash", str(path)], "Firmware"))
 
     # ---- keys

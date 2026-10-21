@@ -11,7 +11,8 @@
   library.py load-sample SLOT NAME WAV...
                                       WAV files into USR SLOT (1-4), one zone each (backs up first)
   library.py flash FILE.fwsc          install a firmware package (backs up first when it can)
-  library.py fetch-sloop              download the latest SLOOP release into ~/fm1-library/firmware
+  library.py fetch sloop|clipper      download the newest SLOOP or Clipper release into ~/fm1-library/firmware
+                                      (fetch-sloop: the same as fetch sloop)
   library.py import-sd                copy new files from the SD card's fm1-library folder
   library.py list                     the library as JSON
   library.py info                     what the FM-1 runs
@@ -41,7 +42,9 @@ STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 SD = Path(os.environ.get("FM1_SD_LIBRARY", "/boot/firmware/fm1-library"))
 SD_SYNC = "/usr/local/sbin/fm1-sd-sync"
 KEEP_AUTO = 20
-SLOOP_RELEASES = "https://api.github.com/repos/isod89/sloop-fm1/releases/latest"
+FIRMWARES = {"sloop": ("SLOOP", "isod89/sloop-fm1"),            # isod89's firmwares, both based on Felucca
+             "clipper": ("Clipper", "isod89/clipper-fm1")}       # (Clipper: experimental)
+RELEASES = "https://api.github.com/repos/{}/releases?per_page=10"
 SUFFIXES = {"backups": (".json",), "projects": (".json",), "samples": (".wav",), "firmware": (".fwsc",)}
 
 
@@ -270,6 +273,7 @@ def job_restore(file):
         sloop.objects_of(backup)               # damaged files stop here, before anything is written
         job.step("Connecting")
         dev = connect()
+        sloop.same_family(dev.version, backup.get("firmware"))      # before anything, even the backup
         dev.check_stopped()
         before = safety_backup(dev, job, "before-restore")
         dev.restore(backup, job.progress("Restoring"))
@@ -280,12 +284,14 @@ def job_load_project(file, source, target):
     if target not in sloop.PROJECT_IDS:
         raise ValueError("TARGET is working, A, B, C or D")
     with Job("load-project") as job:
-        data = sloop.project_from(sloop.load_json(file), source)
+        project = sloop.load_json(file)
+        data = sloop.project_from(project, source)
         job.step("Connecting")
         dev = connect()
+        sloop.same_family(dev.version, project.get("firmware"))     # before anything, even the backup
         dev.check_stopped()
         before = safety_backup(dev, job, "before-project")
-        dev.put_project(data, target, job.progress("Loading project"))
+        dev.put_project(data, target, job.progress("Loading project"), firmware=project.get("firmware"))
         where = "the working project" if target == "working" else f"project {target}"
         job.done(f"Loaded into {where}", before=before and before.name)
 
@@ -307,6 +313,7 @@ def job_load_sample(slot, name, wavs):
         header, data = sloop.build_slot(name, wavs)    # bad WAVs stop here, before the FM-1 is touched
         job.step("Connecting")
         dev = connect()
+        dev.require_sample_slots()
         dev.check_stopped()
         before = safety_backup(dev, job, "before-sample")
         done, report = [0], job.progress("Loading sample")
@@ -356,17 +363,31 @@ def job_flash(package):
         job.done(f"Installed {Path(package).stem}", product=product, before=before and before.name)
 
 
-def job_fetch_sloop():
-    import fm1_install
-    with Job("fetch-sloop") as job:
-        job.step("Checking GitHub")
-        request = urllib.request.Request(SLOOP_RELEASES, headers={"Accept": "application/vnd.github+json",
-                                                                  "User-Agent": "fm1-bridge"})
-        with urllib.request.urlopen(request, timeout=20) as reply:
-            release = json.load(reply)
+def newest_firmware(releases):
+    """(release, its .fwsc asset) of the newest published release that has one (Clipper's are marked
+    experimental, so GitHub's "latest" can't be relied on)"""
+    for release in releases:
+        if release.get("draft"):
+            continue
         asset = next((a for a in release.get("assets", []) if a["name"].endswith(".fwsc")), None)
+        if asset:
+            return release, asset
+    return None, None
+
+
+def job_fetch(name):
+    import fm1_install
+    if name not in FIRMWARES:
+        raise ValueError(f"fetch {' or '.join(FIRMWARES)}")
+    title, repo = FIRMWARES[name]
+    with Job(f"fetch-{name}") as job:
+        job.step("Checking GitHub")
+        request = urllib.request.Request(RELEASES.format(repo), headers={"Accept": "application/vnd.github+json",
+                                                                         "User-Agent": "fm1-bridge"})
+        with urllib.request.urlopen(request, timeout=20) as reply:
+            release, asset = newest_firmware(json.load(reply))
         if not asset:
-            raise ValueError(f"{release.get('tag_name')}: no firmware file in the release")
+            raise ValueError(f"no {title} firmware file on GitHub")
         target = folder("firmware") / asset["name"]
         if target.exists() and target.stat().st_size == asset["size"]:
             job.done(f"Already have {asset['name']}", file=target.name)
@@ -428,7 +449,9 @@ def main(argv=None):
         elif command == "flash" and len(args) == 1:
             job_flash(args[0])
         elif command == "fetch-sloop":
-            job_fetch_sloop()
+            job_fetch("sloop")
+        elif command == "fetch" and len(args) == 1:
+            job_fetch(args[0])
         elif command == "import-sd":
             print(json.dumps(import_sd()))
         elif command == "list":

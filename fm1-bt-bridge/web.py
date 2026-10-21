@@ -137,9 +137,10 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError as e:
                     return self.fail(str(e))
                 return self.send(200, {"ok": True, "message": f"{len(copied)} new file(s) from the SD card"})
-            if command not in ("backup", "fetch-sloop"):
+            jobs = {"backup": ["backup"], "fetch-sloop": ["fetch", "sloop"], "fetch-clipper": ["fetch", "clipper"]}
+            if command not in jobs:
                 return self.fail("unknown command")
-            error = library.spawn([command])
+            error = library.spawn(jobs[command])
             return self.send(200, {"ok": not error, "message": error or "started"})
         if url.path == "/api/ask":
             return self.ask(request)
@@ -194,7 +195,8 @@ class Handler(BaseHTTPRequestHandler):
             path = safe_path("firmware", r.get("file"))
             if not path or not path.is_file():
                 return self.fail("no such firmware")
-            library.ask_box(["flash", str(path)], "Install?", [path.stem[:20], "Keep the FM-1 plugged in"])
+            warning = "Experimental: see its README" if sloop.family(path.name) == "clipper" else "Keep the FM-1 plugged in"
+            library.ask_box(["flash", str(path)], "Install?", [path.stem[:20], warning])
         else:
             return self.fail("unknown command")
         self.send(200, {"ok": True, "message": "Confirm on the box: hold the joystick press for 2 seconds"})
@@ -225,7 +227,7 @@ label.file{display:inline-block}label.file input{display:none}
 
 <section><h2>Now</h2><div id="job" class="meta">Nothing running.</div><div class="bar" id="barwrap" hidden><div id="bar"></div></div>
 <div class="row" style="margin-top:10px"><button class="primary" onclick="run('backup')">Back up now</button>
-<button onclick="run('fetch-sloop')">Get SLOOP update</button><button onclick="run('import-sd')">Import SD card</button></div>
+<button onclick="run('fetch-sloop')">Get SLOOP update</button><button onclick="run('fetch-clipper')" title="isod89's synthesizer firmware, experimental">Get Clipper (experimental)</button><button onclick="run('import-sd')">Import SD card</button></div>
 <div id="note"></div></section>
 
 <section><h2>Backups</h2><div id="backups"></div>
@@ -241,7 +243,7 @@ label.file{display:inline-block}label.file input{display:none}
 <input type="text" id="sname" placeholder="name (8 letters)" maxlength="8" size="12"><select id="sslot"><option value="1">USR1</option><option value="2">USR2</option><option value="3">USR3</option><option value="4">USR4</option></select>
 <button class="primary" onclick="loadSamples()">Load ticked into slot</button></div></section>
 
-<section><h2>Firmware</h2><div id="firmware"></div>
+<section><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's, based on Felucca. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".fwsc" onchange="upload('firmware',this)"><button onclick="this.previousElementSibling.click()">Upload a .fwsc…</button></label></div></section>
 
 <p class="meta">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. A backup is made first.</p>
@@ -295,7 +297,7 @@ function render() {
     : `<p class="empty">No WAV files yet.</p>`;
   $("firmware").innerHTML = lib.firmware.length ? lib.firmware.map((f) => `<div class="item"><div><div class="name">${esc(f.name)}</div><div class="meta">${when(f.date)}</div></div>
     <div class="row"><button onclick="ask({cmd:'flash', file:${q(f.name)}})">Install…</button><button onclick="del('firmware',${q(f.name)})">Delete</button></div></div>`).join("")
-    : `<p class="empty">No firmware yet: Get SLOOP update, or upload a .fwsc.</p>`;
+    : `<p class="empty">No firmware yet: Get SLOOP update or Get Clipper, or upload a .fwsc.</p>`;
 }
 function loadSamples() {
   const files = [...document.querySelectorAll(".pick:checked")].map((c) => c.value);

@@ -181,6 +181,10 @@ class Sloop:
     def can_backup(self):
         return self.info["proto"] >= 6
 
+    def require_sample_slots(self):
+        if family(self.version) == "clipper":
+            raise SloopError("family", "Clipper has wavetable slots, not samples: use Clipper's editor")
+
     def require_backup(self):
         if not self.can_backup():
             raise SloopError("old", f"{self.version}: backups need SLOOP 2.3 or later")
@@ -324,6 +328,7 @@ class Sloop:
         """a whole sloop-backup back onto the FM-1, as SLOOP's editor does"""
         self.require_backup()
         objects = objects_of(file)
+        same_family(self.version, file.get("firmware"))
         newest = max([project_format(objects[i]) for i in (0, 2, 3, 4, 5) if i in objects] or [0])
         if newest > device_format(self.info):
             raise SloopError("newer", f"the backup ({file.get('firmware', '?')}) is newer than {self.version}")
@@ -349,9 +354,10 @@ class Sloop:
                 else:
                     self.write_sample_slot(obj_id - 32, d[:SMP_HDR], d[SMP_DATA:], moved)
 
-    def put_project(self, data, target, progress=lambda done, total: None):
-        """one project (backup object bytes) into "working" or "A".."D" """
+    def put_project(self, data, target, progress=lambda done, total: None, firmware=None):
+        """one project (backup object bytes, from `firmware`) into "working" or "A".."D" """
         self.require_backup()
+        same_family(self.version, firmware)
         if project_format(data) > device_format(self.info):
             raise SloopError("newer", f"the project is newer than {self.version} reads")
         self.check_stopped()
@@ -365,6 +371,7 @@ class Sloop:
 
     def load_samples(self, slot, name, wavs, progress=lambda done, total: None):
         """WAV files into USR slot+1, one zone each (root note from the file name, as SLOOP's uploader)"""
+        self.require_sample_slots()
         header, data = build_slot(name, wavs)
         self.check_stopped()
         done = [0]
@@ -406,6 +413,21 @@ def project_format(data):
 def device_format(info):
     """the newest project format the device reads: 2.6+ (71 parameters) 6, 2.4-2.5 5, older 4"""
     return 6 if info["pcount"] >= 71 else 5 if info["pcount"] >= 61 else 4
+
+
+def family(version):
+    """"sloop" or "clipper" from a firmware name ("FELUCCA SLOOP 2.8"), None if neither. isod89's two
+    firmwares share the protocol and file format but not the data inside: projects, presets and sample
+    slots mean different things in each."""
+    text = str(version or "").upper()
+    return "clipper" if "CLIPPER" in text else "sloop" if "SLOOP" in text else None
+
+
+def same_family(device_version, file_version):
+    a, b = family(device_version), family(file_version)
+    if a and b and a != b:
+        raise SloopError("family", f"that's from {b.capitalize() if b == 'clipper' else 'SLOOP'}, "
+                                   f"the FM-1 runs {a.capitalize() if a == 'clipper' else 'SLOOP'}")
 
 
 def firmware_at_least(version, want):
