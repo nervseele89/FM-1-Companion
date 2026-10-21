@@ -26,12 +26,17 @@ sudo rfkill unblock bluetooth || true
 sudo systemctl enable --now bluetooth
 sudo usermod -aG bluetooth,gpio,spi,audio "$USER"
 
-echo "== Letting the bridge shut down and switch Wi-Fi without a password (KEY3, settings page)"
+echo "== Letting the bridge shut down, switch Wi-Fi and copy backups to the SD card without a password"
+sudo install -m 755 "$DIR/config/fm1-sd-sync" /usr/local/sbin/fm1-sd-sync
 SUDOERS=/etc/sudoers.d/fm1-bridge
-printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/nmcli radio wifi on, /usr/bin/nmcli radio wifi off\n' \
+printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/nmcli radio wifi on, /usr/bin/nmcli radio wifi off, /usr/local/sbin/fm1-sd-sync\n' \
     "$USER" | sudo tee "$SUDOERS" >/dev/null
 sudo chmod 440 "$SUDOERS"
 sudo visudo -cf "$SUDOERS"
+
+echo "== Letting the web page use port 80 (http://$(hostname).local) without root"
+echo "net.ipv4.ip_unprivileged_port_start=80" | sudo tee /etc/sysctl.d/50-fm1-bridge.conf >/dev/null
+sudo sysctl -q -w net.ipv4.ip_unprivileged_port_start=80
 
 echo "== Letting PipeWire run its audio threads in real time (no desktop session on a headless Pi)"
 sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-rtkit.rules" | sudo tee /etc/polkit-1/rules.d/50-fm1-bridge-rtkit.rules >/dev/null
@@ -39,6 +44,13 @@ sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-rtkit.rules" | sudo tee /etc/
 echo "== Installing the bridge"
 install -D -m 755 "$DIR/bridge.py"                              ~/.local/share/fm1-bridge/bridge.py
 install -D -m 644 "$DIR/blemidi.py"                             ~/.local/share/fm1-bridge/blemidi.py
+install -D -m 644 "$DIR/sloop.py"                               ~/.local/share/fm1-bridge/sloop.py
+install -D -m 644 "$DIR/libui.py"                               ~/.local/share/fm1-bridge/libui.py
+install -D -m 755 "$DIR/library.py"                             ~/.local/share/fm1-bridge/library.py
+install -D -m 755 "$DIR/web.py"                                 ~/.local/share/fm1-bridge/web.py
+mkdir -p ~/.local/share/fm1-bridge/vendor/sloop ~/fm1-library/backups ~/fm1-library/projects \
+    ~/fm1-library/samples ~/fm1-library/firmware
+install -m 644 "$DIR"/vendor/sloop/*                            ~/.local/share/fm1-bridge/vendor/sloop/
 install -D -m 644 "$DIR/config/pipewire-10-fm1-bridge.conf"     ~/.config/pipewire/pipewire.conf.d/10-fm1-bridge.conf
 install -D -m 644 "$DIR/config/wireplumber-51-fm1-bridge.conf"  ~/.config/wireplumber/wireplumber.conf.d/51-fm1-bridge.conf
 if wireplumber --version 2>/dev/null | grep -q "Linked with libwireplumber 0\.4"; then   # Bookworm: Lua config
@@ -47,11 +59,12 @@ else                                                                            
     rm -f ~/.config/wireplumber/bluetooth.lua.d/51-fm1-bridge.lua
 fi
 install -D -m 644 "$DIR/config/fm1-bridge.service"              ~/.config/systemd/user/fm1-bridge.service
+install -D -m 644 "$DIR/config/fm1-web.service"                 ~/.config/systemd/user/fm1-web.service
 
 echo "== Starting at boot without a login"
 sudo loginctl enable-linger "$USER"
 systemctl --user daemon-reload
-systemctl --user enable pipewire.socket wireplumber.service fm1-bridge.service
+systemctl --user enable pipewire.socket wireplumber.service fm1-bridge.service fm1-web.service
 sync                                    # on the card before anyone pulls the power
 
 echo

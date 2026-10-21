@@ -26,6 +26,9 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+import library
+from libui import LibraryScreens
+
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
     "rotate": 0,            # 180 if the screen is upside down
@@ -34,6 +37,7 @@ DEFAULTS = {
     "last_name": None,
     "flip_joystick": None,  # None: match the screen; true/false to force
     "midi_enabled": True,
+    "auto_backup": "boot",  # "off", "boot" (once at start-up), or minutes between backups: 2, 5, 10, 30
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -213,6 +217,15 @@ def change_volume(node_id, step):
     run(["wpctl", "set-volume", "-l", "1.0", str(node_id), f"{abs(step)}%{'+' if step > 0 else '-'}"], timeout=5)
 
 
+def alsa_has_card(source_match):
+    """the FM-1's USB sound card is in /proc/asound/cards (whatever PipeWire thinks)"""
+    try:
+        text = Path("/proc/asound/cards").read_text().lower()
+    except OSError:
+        return False
+    return any("usb-audio" in line and any(m in line for m in source_match) for line in text.splitlines())
+
+
 def wifi_enabled():
     """Wi-Fi radio state from NetworkManager: True, False, or None if unknown."""
     code, out = run(["nmcli", "radio", "wifi"], timeout=5)
@@ -331,7 +344,7 @@ class KeyTimer:
     """Turns presses and releases into the app's key events: post(name) on press, or for KEY2/KEY3
     on release, post(name, True) once held long enough, and up/down repeating while held."""
 
-    HOLD = {"key2": 1.2, "key3": 3.0, "up": 0.4, "down": 0.4}
+    HOLD = {"key2": 1.2, "key3": 3.0, "up": 0.4, "down": 0.4, "press": 2.0}    # press held: confirm
     REPEAT = 0.2
 
     def __init__(self, post):
@@ -352,7 +365,7 @@ class KeyTimer:
             hold = self.HOLD.get(name)
             if hold and not info["held"] and now - info["at"] >= hold:
                 info["held"], info["next"] = True, now + self.REPEAT
-                self.post(name, True) if name in ("key2", "key3") else self.post(name)
+                self.post(name, True) if name in ("key2", "key3", "press") else self.post(name)
             elif name in ("up", "down") and info["held"] and now >= info["next"]:
                 info["next"] = now + self.REPEAT
                 self.post(name)
@@ -423,9 +436,12 @@ def short_label(label):
     return label
 
 
-class App:
+class App(LibraryScreens):
+    fit = staticmethod(fit)
+
     def __init__(self, display, state):
         self.display, self.state = display, state
+        self.library_init()
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback()
@@ -439,6 +455,8 @@ class App:
         self.midi = None                      # blemidi.MidiBridge, when BlueZ and mido are there
         self.wifi, self.next_wifi = None, 0.0
         self.setting = 0                      # cursor on the settings page
+        self.flash_paused = False
+        self.no_source_since, self.healed_at = None, -1e9
         self.busy = None                      # text shown while a user action runs
         self.message, self.message_until = None, 0.0
         self.last_activity = time.monotonic()
@@ -448,6 +466,9 @@ class App:
 
     def post(self, *event):
         self.events.put(event)
+
+    def save_settings(self):
+        save_state(self.state)
 
     # ---- background work
 
@@ -472,6 +493,14 @@ class App:
                     and now >= next_reconnect and self.bt_lock.acquire(blocking=False)):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
+            self.auto_backup()
+            request = library.take_request()
+            if request:
+                self.post("request", request)                 # the web page wants a confirm here
+            flashing = self.flash_running()
+            if self.midi and flashing != self.flash_paused:     # no Bluetooth notes into the FM-1 mid-flash
+                self.midi.pause(flashing)
+                self.flash_paused = flashing
             time.sleep(1)
 
     def scan_devices(self):
@@ -484,6 +513,20 @@ class App:
             self.source, self.sink, self.volume = source, sink, volume
             self.post("status", changed)
         self.loop.ensure(source and source["name"], sink and sink["name"])
+        self.heal_pipewire(source)
+
+    def heal_pipewire(self, source):
+        """WirePlumber can lose the FM-1 when it reconnects quickly under another identity (as after a
+        firmware update: app, update loader, app again). If Linux has the FM-1's sound card but PipeWire has
+        had no FM-1 input for 20 s, restart WirePlumber (at most every 3 minutes, never mid-job)."""
+        now = time.monotonic()
+        if source or not alsa_has_card(self.state["source_match"]) or self.job_busy():
+            self.no_source_since = None
+            return
+        self.no_source_since = self.no_source_since or now
+        if now - self.no_source_since > 20 and now - self.healed_at > 180:
+            self.healed_at, self.no_source_since = now, None
+            run(["systemctl", "--user", "restart", "wireplumber"], timeout=30)
 
     def reconnect_quietly(self):
         try:
@@ -583,12 +626,15 @@ class App:
         midi = "n/a" if not self.midi else "on" if self.midi.enabled else "off"
         left = self.midi.pairing_until - time.monotonic() if self.midi else 0
         wifi = {True: "on", False: "off", None: "?"}[self.wifi]
-        return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("midi", "BLE MIDI", midi),
-                ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"), ("wifi", "Wi-Fi", wifi)]
+        return [("library", "Library", "›"), ("speaker", "Speaker", speaker), ("audio", "BT audio", audio),
+                ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                ("wifi", "Wi-Fi", wifi)]
 
     def change_setting(self):
         key = self.settings_rows()[self.setting][0]
-        if key == "speaker" or (key == "audio" and not self.state["last_mac"]):
+        if key == "library":
+            self.open_library()
+        elif key == "speaker" or (key == "audio" and not self.state["last_mac"]):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
             self.disconnect() if self.sink else self.reconnect()
@@ -621,11 +667,17 @@ class App:
         if self.mode != "on":                 # the first press only wakes the screen
             self.wake()
             return
+        if key == "press" and held and self.screen != "confirm":
+            return                            # holding press only confirms (the press itself already acted)
         if key == "key3":
-            if held:
+            if self.flash_running():
+                self.say("Wait: the FM-1 is being flashed")
+            elif held:
                 self.shutdown()
             else:
                 self.say("Hold KEY3 to power off")
+            return
+        if self.library_key(key, held):
             return
         if self.screen == "status":
             if key == "key1":
@@ -683,7 +735,8 @@ class App:
                 self.state["last_name"], self.auto, self.volume,
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
-                tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting)
+                tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting,
+                self.library_view(now))
 
     def render(self, force=False):
         now = time.monotonic()
@@ -696,7 +749,9 @@ class App:
         if self.mode == "saver" and not force:
             self.draw_saver(d, now)
         else:
-            {"scan": self.draw_scan, "settings": self.draw_settings}.get(self.screen, self.draw_status)(d)
+            {"scan": self.draw_scan, "settings": self.draw_settings, "library": self.draw_library,
+             "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job}.get(
+                self.screen, self.draw_status)(d)
             if self.busy:
                 dots = "." * (int(now * 2) % 4)
                 self.draw_box(d, self.busy + dots)
@@ -735,7 +790,12 @@ class App:
             d.ellipse((123, 44, 127, 48), fill=1)                     # MIDI traffic
         vol = f"VOL {self.volume}%" if self.volume is not None else "VOL --"
         d.text((0, 53), vol, font=self.f_small, fill=1)
-        hint = "settings >"
+        running = self.job_busy()
+        if running:                           # a library job (the boot backup, say) and how far it is
+            percent = running.get("percent")
+            hint = running.get("job", "job") + (f" {int(percent)}%" if percent is not None else "…")
+        else:
+            hint = "settings >"
         d.text((128 - d.textlength(hint, font=self.f_small), 53), hint, font=self.f_small, fill=1)
 
     def draw_saver(self, d, now):
@@ -828,6 +888,8 @@ class App:
             elif event and event[0] == "status" and event[1]:
                 self.last_activity = time.monotonic()     # connects and disconnects wake the screen
                 self.wake()
+            elif event and event[0] == "request":
+                self.web_request(event[1])
             self.screensaver()
             self.render()
 

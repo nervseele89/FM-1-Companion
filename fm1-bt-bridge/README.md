@@ -6,9 +6,12 @@ A Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT that gives the M-VAVE FM-1 
 - **MIDI in and out:** the Pi shows up as a Bluetooth MIDI device called **"FM-1 Bridge"**. MIDI
   passes both ways between it and the FM-1's USB MIDI, so an iPad, phone or computer can play the
   FM-1 and receive what you play on it.
+- **A library for the FM-1 (SLOOP):** back up and restore everything on it, load projects and samples,
+  and install firmware updates, from the box or from your phone, with no computer.
 
-It works with any FM-1 firmware that shows up as a USB audio and MIDI device, such as Sloop
-("Felucca").
+Audio and MIDI work with any FM-1 firmware that shows up as a USB audio and MIDI device, such as Sloop
+("Felucca"). The library needs SLOOP 2.3 or later (firmware installs work with any `.fwsc` package
+SLOOP's installer accepts).
 
 ```
                          ┌──Bluetooth A2DP───▶ headphones / speaker
@@ -74,12 +77,13 @@ Any key brings the full screen back; that key press does nothing else.
 Always shut down with **KEY3** (hold) before pulling the power. Pulling the power on a running Pi
 can lose recently changed files or corrupt the SD card.
 
-**Settings** (joystick right; five rows, three at a time):
+**Settings** (joystick right; six rows, three at a time):
 
 ![Settings](../docs/images/screen-settings.png)
 
 | Setting | What it does |
 |---|---|
+| **Library ›** | Backups, projects, samples and firmware (below). |
 | **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
 | **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
 | **BLE MIDI** on/off | Shows or hides "FM-1 Bridge" to MIDI apps. It's remembered. |
@@ -112,6 +116,71 @@ Then MIDI flows both ways:
   over a USB cable. For example, in Sloop, channels 1–3 play the synths and channel 10 the drums.
 - **From the FM-1:** whatever it sends over USB MIDI (keys, sequencer, clock, depending on the
   firmware's MIDI settings) goes to your device.
+
+## Library: backups, projects, samples, firmware
+
+The box talks to SLOOP (2.3 or later) the way SLOOP's own web editor does, over the same USB cable.
+Its backups are **SLOOP backup files** (`sloop-backup` JSON): they open in SLOOP's web editor, and
+backups made there can be restored from the box.
+
+**SLOOP or Clipper:** both are isod89's firmwares, based on Felucca. [SLOOP](https://github.com/isod89/sloop-fm1)
+is a groovebox (tracks, drums, songs, samples); [Clipper](https://github.com/isod89/clipper-fm1) is a
+synthesizer (23 engines, one instrument) and is **experimental**: its own README says it has run very little
+on a real FM-1. The box installs either and switches between them (the file of the other one stays in the
+library, so you can always go back). Backups, projects and samples belong to the firmware they came from:
+the box refuses to put a SLOOP backup or project onto Clipper, or the other way round, and Clipper has
+wavetable slots instead of sample slots (use Clipper's web editor for those). Backing up and restoring
+Clipper's own data works the same way as SLOOP's.
+
+**On the box:** Settings → **Library**:
+
+![Library](../docs/images/screen-library.png)
+
+| Item | What it does |
+|---|---|
+| **Back up now** | Saves everything on the FM-1: the working project, projects A–D, settings, user presets, the FM6 bank, the SYN drum kits, the MIDI map, the theme and the four sample slots. |
+| **Restore ›** | Pick a backup; it replaces what's on the FM-1. |
+| **Load project ›** | Pick a project file, or a project inside any backup, then where it goes: the working project or A–D. |
+| **Load sample ›** | Pick a WAV, then a slot (USR1–4). |
+| **Firmware ›** | Pick a firmware file to install. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
+| **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
+| **Auto backup** | Press to choose: **off**, **at start**, or every **2**, **5**, **10** or **30 min**. Remembered. |
+
+![Job screen](../docs/images/screen-job.png)
+
+**Safe by design:**
+- Anything that writes to the FM-1 **makes a backup first** and asks you to **hold the joystick press
+  for 2 seconds**. A short press only reminds you to hold.
+- It refuses while the FM-1's song plays (stop it first).
+- During a firmware install the screen says *Don't unplug the FM-1*, KEY3 won't shut down, and
+  Bluetooth MIDI pauses. It takes about 2 minutes. Your projects, presets and samples stay.
+- **Automatic backups** (Library → *Auto backup*): *at start* (the default) backs up once whenever the
+  box starts with the FM-1 connected; *2 / 5 / 10 / 30 min* also backs up at that interval while the FM-1
+  is connected. A backup only reads the FM-1 (about 7 seconds), so it's fine while the song plays, and
+  the status screen shows *backup NN%* in its corner. If nothing changed since the last automatic
+  backup, no new file is kept. The newest 20 automatic backups are kept; the ones you make, and those
+  made before a restore, a load or an install, are never deleted.
+
+**From your phone or computer:** with Wi-Fi on (Settings → Wi-Fi), open **http://fm1bridge.local**
+(or the Pi's IP address). The page lists the library and does everything the box does, plus:
+- **upload** WAVs, firmware (`.fwsc`), backups and project files; **download** backups, and any
+  project of a backup as its own project file to share;
+- load **several WAVs into one slot**: each becomes a key zone, with its root note taken from the file
+  name (`bass_C2.wav`, `lead_A4.wav`). A slot holds about 7 seconds in all.
+
+Anything on the page that writes to the FM-1 still has to be **confirmed on the box** (hold press), so
+nothing on your network can change the FM-1 without you.
+
+**Using the SD card:** the card's **bootfs** drive (the one you see on a computer) has an
+`fm1-library` folder with `backups`, `firmware`, `projects` and `samples`. Drop files into those
+folders from a computer and choose *Import SD card*; backups are copied there too, so you can take
+them off the card.
+
+**Over SSH,** the same jobs run from the command line:
+```
+python3 ~/.local/share/fm1-bridge/library.py backup
+python3 ~/.local/share/fm1-bridge/library.py --help
+```
 
 ## Good to know
 
@@ -178,6 +247,17 @@ glitch-free on a Zero W); if it still crackles, raise `default.clock.quantum` an
 `default.clock.min-quantum` to `4096` in `~/.config/pipewire/pipewire.conf.d/10-fm1-bridge.conf`
 and reboot. `pw-top` shows the glitch counts in its ERR column.
 
+**A library job failed.** The job screen (and the web page's *Now* line) gives the reason: most often
+*stop the song on the FM-1 first*, or *FM-1 not found on USB*. A backup made before a failed write is
+in the library (`…_before-restore`, `…_before-flash`…): restore it to go back.
+
+**A firmware install was cut off** (unplugged, power lost). The FM-1 waits in update mode. Run the
+same install again from the box or the web page: it finishes the write.
+
+**No audio after a firmware install.** The bridge notices when PipeWire loses the FM-1 after it
+restarts and fixes it within about half a minute. If audio is still missing, restart the bridge:
+`systemctl --user restart wireplumber fm1-bridge`.
+
 **Forget the headphones and start over:**
 ```
 bluetoothctl remove AA:BB:CC:DD:EE:FF
@@ -190,7 +270,15 @@ Then pair again with KEY1.
 |---|---|---|
 | `bridge.py` | `~/.local/share/fm1-bridge/` | The OLED app, headphone control and audio routing |
 | `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service and its link to the FM-1's USB MIDI |
+| `libui.py` | `~/.local/share/fm1-bridge/` | The Library screens on the box |
+| `library.py` | `~/.local/share/fm1-bridge/` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
+| `sloop.py` | `~/.local/share/fm1-bridge/` | SLOOP's editor protocol: backups, projects, sample slots |
+| `web.py` | `~/.local/share/fm1-bridge/` | The web page |
+| `vendor/sloop/` | `~/.local/share/fm1-bridge/vendor/sloop/` | SLOOP's installer and sample converter, unchanged (see `VENDORED.md`) |
 | `config/fm1-bridge.service` | `~/.config/systemd/user/` | Starts the app at boot |
+| `config/fm1-web.service` | `~/.config/systemd/user/` | Starts the web page at boot |
+| `config/fm1-sd-sync` | `/usr/local/sbin/` | Copies backups to the SD card (root helper, run through sudo) |
+| (library) | `~/fm1-library/` | Your backups, projects, samples and firmware |
 | `config/pipewire-10-fm1-bridge.conf` | `~/.config/pipewire/pipewire.conf.d/` | Larger buffers for the Zero W |
 | `config/wireplumber-51-fm1-bridge.conf` | `~/.config/wireplumber/wireplumber.conf.d/` | Headless Bluetooth, A2DP source only, PipeWire's own BLE MIDI off (WirePlumber 0.5) |
 | `config/wireplumber-51-fm1-bridge.lua` | `~/.config/wireplumber/bluetooth.lua.d/` | The same for WirePlumber 0.4 (Bookworm) |

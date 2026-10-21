@@ -10,7 +10,13 @@ Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, connected to the FM-1 by USB
 - **Audio out:** the FM-1's USB audio plays on Bluetooth headphones or a speaker.
 - **MIDI in and out:** the Pi shows up as a Bluetooth MIDI device, **"FM-1 Bridge"**, so a
   keyboard, iPad, phone or computer can play the FM-1 wirelessly and receive what it sends.
-- **Its own screen and controls:** status, pairing and settings on the HAT's OLED, keys and joystick.
+- **A library for the FM-1 (v2, SLOOP 2.3+):** back up and restore everything on it, load projects and
+  samples, and install firmware (it downloads [SLOOP](https://github.com/isod89/sloop-fm1) and, if you
+  want it, isod89's experimental synthesizer firmware [Clipper](https://github.com/isod89/clipper-fm1)),
+  from the box or from a web page on your phone. No computer needed. Backups are SLOOP's own backup files,
+  so they also open in SLOOP's web editor.
+- **Its own screen and controls:** status, pairing, settings and the library on the HAT's OLED, keys and
+  joystick.
 
 ```
                          ┌──Bluetooth A2DP───▶ headphones / speaker
@@ -18,15 +24,19 @@ FM-1 ──USB──▶ Pi Zero W ─┤
  (audio + MIDI)          └◀─Bluetooth LE MIDI─▶ keyboard / iPad / phone / Mac
 ```
 
-Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 on the FM-1, a JBL Go 3
-speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI.
+Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 and 2.8 on the FM-1, a JBL Go 3
+speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI. The library was tested on the real FM-1 with
+a backup, a restore (read back byte for byte), a project load, a sample load and the update from
+SLOOP 2.7.1 to 2.8 (projects, presets and samples kept).
 
 ## Screens
 
 | | |
 |---|---|
 | ![Status screen](docs/images/screen-status.png) | ![Settings](docs/images/screen-settings.png) |
-| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume. LIVE means audio is flowing. | **Settings** (joystick right): speaker, Bluetooth audio on/off, BLE MIDI, a pairing window, Wi-Fi. |
+| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume. LIVE means audio is flowing. | **Settings** (joystick right): the library, speaker, Bluetooth audio on/off, BLE MIDI, a pairing window, Wi-Fi. |
+| ![Library](docs/images/screen-library.png) | ![Firmware install](docs/images/screen-job.png) |
+| **Library:** back up, restore, load a project or a sample, install firmware, import from the SD card. Writes ask you to hold the joystick press for 2 seconds, and back up first. | **A job running:** here a SLOOP update, about 2 minutes. |
 | ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |
 | **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. | **Pairing**, then it's remembered and reconnects by itself. |
 | ![Screensaver](docs/images/screen-screensaver.png) | |
@@ -52,8 +62,14 @@ sudo reboot
 |---|---|
 | `fm1-bt-bridge/bridge.py` | The OLED app: status and settings screens, headphone pairing, audio routing (PipeWire), keys |
 | `fm1-bt-bridge/blemidi.py` | The Bluetooth LE MIDI service (BlueZ) and its link to the FM-1's USB MIDI, in a process of its own |
-| `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot service on the Pi |
-| `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit and systemd configuration |
+| `fm1-bt-bridge/libui.py` | The Library screens on the box |
+| `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
+| `fm1-bt-bridge/sloop.py` | SLOOP's editor protocol over USB MIDI: backups, projects, sample slots |
+| `fm1-bt-bridge/web.py` | The library's web page (http://fm1bridge.local while Wi-Fi is on) |
+| `fm1-bt-bridge/vendor/sloop/` | SLOOP's firmware installer and sample converter, copied unchanged (GPL-3.0, credited in `VENDORED.md`) |
+| `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot services on the Pi |
+| `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd and SD-card helper configuration |
+| `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for the library, its screens and the web page (`python tests/test_library.py` etc.; needs mido and Pillow) |
 | `tools/midi_timing.py` | Analyses the bridge's Bluetooth MIDI timing log (`/dev/shm/fm1-midi-timing.log` on the Pi) |
 | `tools/render_screens.py` | Draws the OLED screens as PNG files for this README, without a Pi |
 | `docs/images/` | The photo and screen images |

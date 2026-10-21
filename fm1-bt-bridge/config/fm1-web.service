@@ -1,0 +1,14 @@
+[Unit]
+Description=FM-1 bridge web page (library)
+After=network.target
+
+[Service]
+WorkingDirectory=%h/.local/share/fm1-bridge
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 %h/.local/share/fm1-bridge/web.py
+Restart=always
+RestartSec=5
+Nice=10
+
+[Install]
+WantedBy=default.target

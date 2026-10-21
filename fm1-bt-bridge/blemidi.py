@@ -441,6 +441,17 @@ def start_bluez(bridge):
     GLib.MainLoop().run()
 
 
+LIBRARY_SYSEX = (bytes([0xF0, 0x7D, 0x46, 0x4C]),   # SLOOP's editor protocol (the box's library)
+                 bytes([0xF0, 0x00, 0x59]),           # firmware update frames
+                 bytes([0xF0, 0x22, 0x24, 0x35]),     # update start
+                 bytes([0xF0, 0x00, 0x32, 0x45]))     # update handshake
+
+
+def is_library_sysex(message):
+    """the FM-1's answers to the library and the updater: not for the Bluetooth MIDI device"""
+    return message[:1] == b"\xf0" and message.startswith(LIBRARY_SYSEX)
+
+
 TIMING_LOG = "/dev/shm/fm1-midi-timing.log"     # RAM only; for measuring Bluetooth timing
 
 
@@ -466,7 +477,7 @@ class MidiBridge:
     usb_label(), peer, enabled, pairing_until, activity()."""
 
     def __init__(self, source_match, enabled=True):
-        self.enabled = enabled
+        self.enabled, self.paused = enabled, False
         self.peer, self.peer_path = None, None
         self.pairing_until = 0.0
         self.last_ble = 0.0
@@ -487,7 +498,7 @@ class MidiBridge:
 
     # USB -> BLE: queue, then send from the GLib thread in as few packets as possible
     def from_usb(self, message):
-        if not (self.bluez and self.enabled and self.peer):
+        if not (self.bluez and self.enabled and self.peer) or is_library_sysex(message):
             return
         with self.lock:
             self.pending.append(message)
@@ -510,7 +521,7 @@ class MidiBridge:
             self.peer_path, self.peer = str(device_path), self.peer or "connected"
             self.bluez["idle_add"](self.lookup_name)          # after replying to bluetoothd
         self.last_ble = time.monotonic()
-        if self.enabled:
+        if self.enabled and not self.paused:
             self.usb.send_bytes(strip_timestamps(packet))
         log_timing(packet, self.last_ble)
 
@@ -566,6 +577,8 @@ def run_child(conn, source_match, enabled):
                 bridge.set_enabled(command[1])
             elif command[0] == "pair":
                 bridge.open_pairing()
+            elif command[0] == "pause":            # no Bluetooth notes into the FM-1 while it's flashed
+                bridge.paused = command[1]
 
     threading.Thread(target=commands, daemon=True).start()
     last, next_poll = None, 0.0
@@ -630,3 +643,6 @@ class MidiProcess:
     def open_pairing(self):
         self.pairing_until = time.monotonic() + PAIRING_SECONDS
         self.conn.send(("pair",))
+
+    def pause(self, on):
+        self.conn.send(("pause", on))

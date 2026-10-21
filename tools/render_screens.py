@@ -62,7 +62,15 @@ def scenes(app):
         pass
 
     def settings():
-        app.screen, app.setting = "settings", 1
+        app.screen, app.setting = "settings", 0
+
+    def library():
+        app.screen, app.lib_cursor = "library", 0
+
+    def job():
+        app.screen, app.job_title = "job", "Firmware"
+        state = {"job": "flash", "state": "running", "step": "Writing", "percent": 64}
+        app.library_state = lambda now=None: state
 
     def speakers():
         app.screen, app.scanning, app.cursor = "scan", False, 1
@@ -76,7 +84,7 @@ def scenes(app):
         app.mode = "saver"
 
     return [("status", status), ("settings", settings), ("speakers", speakers), ("pairing", pairing),
-            ("screensaver", saver)]
+            ("screensaver", saver), ("library", library), ("job", job)]
 
 
 def main():
@@ -97,6 +105,7 @@ def main():
         app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
         app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
         app.volume = 75
+        app.library_state = lambda now=None: None     # no library job (whatever this computer has)
         dict(scenes(app))[name]()
         app.render()
         oled(display.image).save(out / f"screen-{name}.png", optimize=True)
