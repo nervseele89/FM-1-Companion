@@ -1,0 +1,21 @@
+#!/bin/sh
+# FM-1 bridge: copy the library's backups onto the SD card's FAT partition, which only root may write, so a
+# computer can read them. Run by library.py through sudo (installed to /usr/local/sbin, no arguments).
+set -eu
+user="${SUDO_USER:?run through sudo}"
+home="$(getent passwd "$user" | cut -d: -f6)"
+src="$home/fm1-library/backups"
+sd=/boot/firmware/fm1-library
+for d in backups firmware projects samples; do
+    mkdir -p "$sd/$d"
+done
+for f in "$src"/*.json; do
+    [ -e "$f" ] || continue
+    b="$(basename "$f")"
+    [ -e "$sd/backups/$b" ] || cp "$f" "$sd/backups/$b"
+done
+for f in "$sd"/backups/*_auto.json; do          # automatic backups the library has dropped
+    [ -e "$f" ] || continue
+    [ -e "$src/$(basename "$f")" ] || rm -f "$f"
+done
+sync

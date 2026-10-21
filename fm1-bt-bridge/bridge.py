@@ -26,6 +26,8 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+from libui import LibraryScreens
+
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
     "rotate": 0,            # 180 if the screen is upside down
@@ -331,7 +333,7 @@ class KeyTimer:
     """Turns presses and releases into the app's key events: post(name) on press, or for KEY2/KEY3
     on release, post(name, True) once held long enough, and up/down repeating while held."""
 
-    HOLD = {"key2": 1.2, "key3": 3.0, "up": 0.4, "down": 0.4}
+    HOLD = {"key2": 1.2, "key3": 3.0, "up": 0.4, "down": 0.4, "press": 2.0}    # press held: confirm
     REPEAT = 0.2
 
     def __init__(self, post):
@@ -352,7 +354,7 @@ class KeyTimer:
             hold = self.HOLD.get(name)
             if hold and not info["held"] and now - info["at"] >= hold:
                 info["held"], info["next"] = True, now + self.REPEAT
-                self.post(name, True) if name in ("key2", "key3") else self.post(name)
+                self.post(name, True) if name in ("key2", "key3", "press") else self.post(name)
             elif name in ("up", "down") and info["held"] and now >= info["next"]:
                 info["next"] = now + self.REPEAT
                 self.post(name)
@@ -423,9 +425,12 @@ def short_label(label):
     return label
 
 
-class App:
+class App(LibraryScreens):
+    fit = staticmethod(fit)
+
     def __init__(self, display, state):
         self.display, self.state = display, state
+        self.library_init()
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback()
@@ -439,6 +444,7 @@ class App:
         self.midi = None                      # blemidi.MidiBridge, when BlueZ and mido are there
         self.wifi, self.next_wifi = None, 0.0
         self.setting = 0                      # cursor on the settings page
+        self.flash_paused = False
         self.busy = None                      # text shown while a user action runs
         self.message, self.message_until = None, 0.0
         self.last_activity = time.monotonic()
@@ -472,6 +478,11 @@ class App:
                     and now >= next_reconnect and self.bt_lock.acquire(blocking=False)):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
+            self.auto_backup()
+            flashing = self.flash_running()
+            if self.midi and flashing != self.flash_paused:     # no Bluetooth notes into the FM-1 mid-flash
+                self.midi.pause(flashing)
+                self.flash_paused = flashing
             time.sleep(1)
 
     def scan_devices(self):
@@ -583,12 +594,15 @@ class App:
         midi = "n/a" if not self.midi else "on" if self.midi.enabled else "off"
         left = self.midi.pairing_until - time.monotonic() if self.midi else 0
         wifi = {True: "on", False: "off", None: "?"}[self.wifi]
-        return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("midi", "BLE MIDI", midi),
-                ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"), ("wifi", "Wi-Fi", wifi)]
+        return [("library", "Library", "›"), ("speaker", "Speaker", speaker), ("audio", "BT audio", audio),
+                ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                ("wifi", "Wi-Fi", wifi)]
 
     def change_setting(self):
         key = self.settings_rows()[self.setting][0]
-        if key == "speaker" or (key == "audio" and not self.state["last_mac"]):
+        if key == "library":
+            self.open_library()
+        elif key == "speaker" or (key == "audio" and not self.state["last_mac"]):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
             self.disconnect() if self.sink else self.reconnect()
@@ -621,11 +635,17 @@ class App:
         if self.mode != "on":                 # the first press only wakes the screen
             self.wake()
             return
+        if key == "press" and held and self.screen != "confirm":
+            return                            # holding press only confirms (the press itself already acted)
         if key == "key3":
-            if held:
+            if self.flash_running():
+                self.say("Wait: the FM-1 is being flashed")
+            elif held:
                 self.shutdown()
             else:
                 self.say("Hold KEY3 to power off")
+            return
+        if self.library_key(key, held):
             return
         if self.screen == "status":
             if key == "key1":
@@ -683,7 +703,8 @@ class App:
                 self.state["last_name"], self.auto, self.volume,
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
-                tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting)
+                tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting,
+                self.library_view(now))
 
     def render(self, force=False):
         now = time.monotonic()
@@ -696,7 +717,9 @@ class App:
         if self.mode == "saver" and not force:
             self.draw_saver(d, now)
         else:
-            {"scan": self.draw_scan, "settings": self.draw_settings}.get(self.screen, self.draw_status)(d)
+            {"scan": self.draw_scan, "settings": self.draw_settings, "library": self.draw_library,
+             "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job}.get(
+                self.screen, self.draw_status)(d)
             if self.busy:
                 dots = "." * (int(now * 2) % 4)
                 self.draw_box(d, self.busy + dots)
@@ -735,7 +758,12 @@ class App:
             d.ellipse((123, 44, 127, 48), fill=1)                     # MIDI traffic
         vol = f"VOL {self.volume}%" if self.volume is not None else "VOL --"
         d.text((0, 53), vol, font=self.f_small, fill=1)
-        hint = "settings >"
+        running = self.job_busy()
+        if running:                           # a library job (the boot backup, say) and how far it is
+            percent = running.get("percent")
+            hint = running.get("job", "job") + (f" {int(percent)}%" if percent is not None else "…")
+        else:
+            hint = "settings >"
         d.text((128 - d.textlength(hint, font=self.f_small), 53), hint, font=self.f_small, fill=1)
 
     def draw_saver(self, d, now):

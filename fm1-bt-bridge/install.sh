@@ -26,9 +26,10 @@ sudo rfkill unblock bluetooth || true
 sudo systemctl enable --now bluetooth
 sudo usermod -aG bluetooth,gpio,spi,audio "$USER"
 
-echo "== Letting the bridge shut down and switch Wi-Fi without a password (KEY3, settings page)"
+echo "== Letting the bridge shut down, switch Wi-Fi and copy backups to the SD card without a password"
+sudo install -m 755 "$DIR/config/fm1-sd-sync" /usr/local/sbin/fm1-sd-sync
 SUDOERS=/etc/sudoers.d/fm1-bridge
-printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/nmcli radio wifi on, /usr/bin/nmcli radio wifi off\n' \
+printf '%s ALL=(root) NOPASSWD: /usr/bin/systemctl poweroff, /usr/bin/nmcli radio wifi on, /usr/bin/nmcli radio wifi off, /usr/local/sbin/fm1-sd-sync\n' \
     "$USER" | sudo tee "$SUDOERS" >/dev/null
 sudo chmod 440 "$SUDOERS"
 sudo visudo -cf "$SUDOERS"
@@ -39,6 +40,12 @@ sed "s/FM1_USER/$USER/" "$DIR/config/50-fm1-bridge-rtkit.rules" | sudo tee /etc/
 echo "== Installing the bridge"
 install -D -m 755 "$DIR/bridge.py"                              ~/.local/share/fm1-bridge/bridge.py
 install -D -m 644 "$DIR/blemidi.py"                             ~/.local/share/fm1-bridge/blemidi.py
+install -D -m 644 "$DIR/sloop.py"                               ~/.local/share/fm1-bridge/sloop.py
+install -D -m 644 "$DIR/libui.py"                               ~/.local/share/fm1-bridge/libui.py
+install -D -m 755 "$DIR/library.py"                             ~/.local/share/fm1-bridge/library.py
+mkdir -p ~/.local/share/fm1-bridge/vendor/sloop ~/fm1-library/backups ~/fm1-library/projects \
+    ~/fm1-library/samples ~/fm1-library/firmware
+install -m 644 "$DIR"/vendor/sloop/*                            ~/.local/share/fm1-bridge/vendor/sloop/
 install -D -m 644 "$DIR/config/pipewire-10-fm1-bridge.conf"     ~/.config/pipewire/pipewire.conf.d/10-fm1-bridge.conf
 install -D -m 644 "$DIR/config/wireplumber-51-fm1-bridge.conf"  ~/.config/wireplumber/wireplumber.conf.d/51-fm1-bridge.conf
 if wireplumber --version 2>/dev/null | grep -q "Linked with libwireplumber 0\.4"; then   # Bookworm: Lua config

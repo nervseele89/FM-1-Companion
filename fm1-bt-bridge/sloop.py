@@ -479,5 +479,5 @@ def describe(file):
     objects = objects_of(file, need_complete=False)
     projects = [n for n, i in PROJECT_IDS.items() if objects.get(i) and n != "working"]
     samples = [f"USR{i - 31}" for i in SAMPLES if objects.get(i)]
-    return {"firmware": file.get("firmware"), "date": file.get("date"), "projects": projects, "samples": samples,
-            "bytes": sum(len(d) for d in objects.values())}
+    return {"firmware": file.get("firmware"), "made": file.get("date"), "projects": projects, "samples": samples,
+            "data_bytes": sum(len(d) for d in objects.values())}
