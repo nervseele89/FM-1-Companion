@@ -216,6 +216,15 @@ def change_volume(node_id, step):
     run(["wpctl", "set-volume", "-l", "1.0", str(node_id), f"{abs(step)}%{'+' if step > 0 else '-'}"], timeout=5)
 
 
+def alsa_has_card(source_match):
+    """the FM-1's USB sound card is in /proc/asound/cards (whatever PipeWire thinks)"""
+    try:
+        text = Path("/proc/asound/cards").read_text().lower()
+    except OSError:
+        return False
+    return any("usb-audio" in line and any(m in line for m in source_match) for line in text.splitlines())
+
+
 def wifi_enabled():
     """Wi-Fi radio state from NetworkManager: True, False, or None if unknown."""
     code, out = run(["nmcli", "radio", "wifi"], timeout=5)
@@ -446,6 +455,7 @@ class App(LibraryScreens):
         self.wifi, self.next_wifi = None, 0.0
         self.setting = 0                      # cursor on the settings page
         self.flash_paused = False
+        self.no_source_since, self.healed_at = None, -1e9
         self.busy = None                      # text shown while a user action runs
         self.message, self.message_until = None, 0.0
         self.last_activity = time.monotonic()
@@ -499,6 +509,20 @@ class App(LibraryScreens):
             self.source, self.sink, self.volume = source, sink, volume
             self.post("status", changed)
         self.loop.ensure(source and source["name"], sink and sink["name"])
+        self.heal_pipewire(source)
+
+    def heal_pipewire(self, source):
+        """WirePlumber can lose the FM-1 when it reconnects quickly under another identity (as after a
+        firmware update: app, update loader, app again). If Linux has the FM-1's sound card but PipeWire has
+        had no FM-1 input for 20 s, restart WirePlumber (at most every 3 minutes, never mid-job)."""
+        now = time.monotonic()
+        if source or not alsa_has_card(self.state["source_match"]) or self.job_busy():
+            self.no_source_since = None
+            return
+        self.no_source_since = self.no_source_since or now
+        if now - self.no_source_since > 20 and now - self.healed_at > 180:
+            self.healed_at, self.no_source_since = now, None
+            run(["systemctl", "--user", "restart", "wireplumber"], timeout=30)
 
     def reconnect_quietly(self):
         try:

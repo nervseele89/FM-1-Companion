@@ -303,6 +303,7 @@ def job_load_sample(slot, name, wavs):
 def job_flash(package):
     import fm1_install
     with Job("flash") as job:
+        job.step("Checking the package")       # (~30 s on a Zero W)
         product, image = fm1_install.load_package(package, False)   # a bad package stops here
         job.step("Connecting")
         before = None
@@ -333,7 +334,7 @@ def job_flash(package):
             updater.install(device, image, product, progress)
         except fm1_install.InstallError as e:
             raise sloop.SloopError("rc", str(e))
-        job.done(f"Installed {product}", product=product, before=before and before.name)
+        job.done(f"Installed {Path(package).stem}", product=product, before=before and before.name)
 
 
 def job_fetch_sloop():
