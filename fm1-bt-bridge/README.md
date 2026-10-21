@@ -59,13 +59,13 @@ The screen shows the bridge about 30–40 seconds after power-on.
 
 **The status screen:**
 
-```
-FM-1 > BT            LIVE   ← audio is flowing
-IN   Felucca                ← the FM-1, as its firmware names it
-OUT  WH-1000XM4             ← the headphones
-MIDI SMK-37+VA_BLE       •  ← the MIDI device connected (the dot blinks with MIDI traffic)
-VOL 60%          settings >
-```
+![Status screen](../docs/images/screen-status.png)
+
+- **LIVE**: audio is flowing from the FM-1 to the speaker.
+- **IN**: the FM-1, as its firmware names it (Sloop: "Felucca").
+- **OUT**: the speaker or headphones.
+- **MIDI**: the Bluetooth MIDI device connected. The dot blinks with MIDI traffic.
+- **VOL**: the speaker volume (joystick up/down).
 
 To protect the OLED from burn-in, the screen dims after a minute. After five minutes it shows only
 a small **FM-1 LIVE** (or *idle*) that moves around the screen, so you can still tell it's running.
@@ -74,7 +74,9 @@ Any key brings the full screen back; that key press does nothing else.
 Always shut down with **KEY3** (hold) before pulling the power. Pulling the power on a running Pi
 can lose recently changed files or corrupt the SD card.
 
-**Settings:**
+**Settings** (joystick right; five rows, three at a time):
+
+![Settings](../docs/images/screen-settings.png)
 
 | Setting | What it does |
 |---|---|

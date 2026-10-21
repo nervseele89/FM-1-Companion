@@ -1,5 +1,7 @@
 # FM-1 Sloop/Felucca Companion Device
 
+![The bridge: a Pi Zero W with the Waveshare OLED HAT, streaming the FM-1 to a JBL Go 3](docs/images/device.jpg)
+
 A small Bluetooth box for the **M-VAVE FM-1** pocket synth running custom firmware such as
 [Sloop](https://github.com/isod89/sloop-fm1) or [Felucca](https://github.com/hugelton/Felucca).
 Those firmwares never switch the FM-1's radio on, so this adds the Bluetooth from outside: a
@@ -18,6 +20,19 @@ FM-1 ──USB──▶ Pi Zero W ─┤
 
 Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 on the FM-1, a JBL Go 3
 speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI.
+
+## Screens
+
+| | |
+|---|---|
+| ![Status screen](docs/images/screen-status.png) | ![Settings](docs/images/screen-settings.png) |
+| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume. LIVE means audio is flowing. | **Settings** (joystick right): speaker, Bluetooth audio on/off, BLE MIDI, a pairing window, Wi-Fi. |
+| ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |
+| **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. | **Pairing**, then it's remembered and reconnects by itself. |
+| ![Screensaver](docs/images/screen-screensaver.png) | |
+| **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. | |
+
+The screen images are drawn by the bridge's own code (`tools/render_screens.py`).
 
 ## Getting started
 
@@ -40,6 +55,8 @@ sudo reboot
 | `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot service on the Pi |
 | `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit and systemd configuration |
 | `tools/midi_timing.py` | Analyses the bridge's Bluetooth MIDI timing log (`/dev/shm/fm1-midi-timing.log` on the Pi) |
+| `tools/render_screens.py` | Draws the OLED screens as PNG files for this README, without a Pi |
+| `docs/images/` | The photo and screen images |
 
 ## Known limits
 
