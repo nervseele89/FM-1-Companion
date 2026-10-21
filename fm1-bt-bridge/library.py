@@ -129,6 +129,53 @@ def read_state():
         return None
 
 
+def running():
+    """the state of the library job that is running now (its process alive), else None"""
+    state = read_state()
+    if not state or state.get("state") != "running":
+        return None
+    try:
+        os.kill(state.get("pid", 0), 0)
+    except (OSError, TypeError):
+        return None                           # it died without saying
+    return state
+
+
+def spawn(args):
+    """start `library.py args` in the background, as its own systemd user unit where there is one (so it
+    outlives whoever started it); -> an error message, or None"""
+    if running():
+        return "a library job is running"
+    command = [sys.executable, str(Path(__file__).resolve()), *args]
+    if shutil.which("systemd-run"):
+        command = ["systemd-run", "--user", "--collect", "--quiet", f"--unit=fm1-library-{time.time_ns()}", *command]
+    try:
+        subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        return str(e)
+    return None
+
+
+# A request from the web page to write to the FM-1: the box shows it and acts only when it's confirmed there
+REQUEST = RUNTIME / "fm1-web-request.json"
+
+
+def ask_box(args, title, lines):
+    REQUEST.parent.mkdir(parents=True, exist_ok=True)
+    # written in place: the box reads it every second and skips a half-written one
+    REQUEST.write_text(json.dumps({"args": args, "title": title, "lines": lines, "time": time.time()}))
+
+
+def take_request():
+    """the web page's pending request (taken once), if it's under 2 minutes old"""
+    try:
+        request = json.loads(REQUEST.read_text())
+        REQUEST.unlink()
+    except (OSError, ValueError):
+        return None
+    return request if time.time() - request.get("time", 0) < 120 else None
+
+
 # ---------------------------------------------------------------- the device
 
 def connect():

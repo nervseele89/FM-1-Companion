@@ -26,6 +26,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+import library
 from libui import LibraryScreens
 
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
@@ -479,6 +480,9 @@ class App(LibraryScreens):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
             self.auto_backup()
+            request = library.take_request()
+            if request:
+                self.post("request", request)                 # the web page wants a confirm here
             flashing = self.flash_running()
             if self.midi and flashing != self.flash_paused:     # no Bluetooth notes into the FM-1 mid-flash
                 self.midi.pause(flashing)
@@ -856,6 +860,8 @@ class App(LibraryScreens):
             elif event and event[0] == "status" and event[1]:
                 self.last_activity = time.monotonic()     # connects and disconnects wake the screen
                 self.wake()
+            elif event and event[0] == "request":
+                self.web_request(event[1])
             self.screensaver()
             self.render()
 

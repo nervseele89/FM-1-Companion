@@ -5,16 +5,12 @@ restarts; their progress comes back through library.py's state file. Mixed into 
 fonts, fit(), say(), draw_box() and the screen machinery.
 """
 import os
-import shutil
-import subprocess
-import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
 import library
 
-LIBRARY_PY = str(Path(__file__).resolve().parent / "library.py")
 SLOTS = ["USR1", "USR2", "USR3", "USR4"]
 TARGETS = [("working", "Working project"), ("A", "Project A"), ("B", "Project B"), ("C", "Project C"),
            ("D", "Project D")]
@@ -30,6 +26,7 @@ def job_running(state):
     except (OSError, TypeError):
         return None                           # it died without saying: not running
     return state
+
 
 
 def short_date(path_name):
@@ -68,17 +65,9 @@ class LibraryScreens:
         return job_running(self.library_state())
 
     def start_job(self, args, title, show=True):
-        if self.job_busy():
-            self.say("A library job is running")
-            return
-        command = [sys.executable, LIBRARY_PY, *args]
-        if shutil.which("systemd-run"):       # its own unit: survives a restart of the bridge
-            command = ["systemd-run", "--user", "--collect", "--quiet",
-                       f"--unit=fm1-library-{int(time.time())}", *command]
-        try:
-            subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        except OSError as e:
-            self.say(f"Can't start: {e}"[:40])
+        error = library.spawn(args)           # its own unit: survives a restart of the bridge
+        if error:
+            self.say(f"Can't start: {error}"[:40])
             return
         self.job_read = 0.0
         if show:
@@ -94,6 +83,17 @@ class LibraryScreens:
         except OSError:
             return
         self.start_job(["backup", "--auto"], "Auto backup", show=False)
+
+    def web_request(self, request):
+        """the web page asked to write to the FM-1: show it to be confirmed here (hold press)"""
+        args, title = request.get("args") or [], request.get("title") or "Web request"
+        if not args or args[0] not in WRITES:
+            return
+        self.pick = None
+        self.ask(title, (request.get("lines") or [])[:2] + ["from the web page"],
+                 lambda: self.start_job(args, title), back="status")
+        self.last_activity = time.monotonic()
+        self.wake()
 
     def flash_running(self):
         state = self.job_busy()
@@ -225,7 +225,8 @@ class LibraryScreens:
             elif key == "press":
                 self.say("Hold to confirm", 1.5)
             elif key == "left":
-                self.screen = self.confirm["back"] if self.pick else "library"
+                back = self.confirm["back"]
+                self.screen = "library" if back == "pick" and not self.pick else back
             return True
         if self.screen == "job":
             state = self.library_state()
