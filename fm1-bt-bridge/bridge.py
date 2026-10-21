@@ -1,0 +1,878 @@
+#!/usr/bin/env python3
+"""FM-1 Bluetooth bridge for a Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT.
+
+Sends the FM-1's USB audio (any firmware that shows up as a USB audio input, such as
+Sloop's "Felucca") to Bluetooth headphones through PipeWire, passes MIDI both ways between
+the FM-1's USB MIDI and Bluetooth LE MIDI (blemidi.py), and drives the HAT:
+
+  KEY1           scan for headphones; pick with the joystick, press to pair
+  KEY2           reconnect the last headphones (hold: disconnect)
+  KEY3 (hold 3s) shut down safely
+  joystick       up/down: volume on the status screen, move in lists; right: settings
+                 (BLE MIDI, pairing window, Wi-Fi); press: change; left: back
+
+  bridge.py --test-screen   draw a test pattern (check the orientation)
+  bridge.py --sim DIR       run without the HAT, writing frames as PNG files to DIR
+"""
+import json
+import os
+import queue
+import re
+import subprocess
+import sys
+import threading
+import time
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
+DEFAULTS = {
+    "rotate": 0,            # 180 if the screen is upside down
+    "contrast": 128,
+    "last_mac": None,
+    "last_name": None,
+    "flip_joystick": None,  # None: match the screen; true/false to force
+    "midi_enabled": True,
+    "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
+}
+GPIO_CHIP = "/dev/gpiochip0"
+PIN_DC, PIN_RST = 24, 25
+KEYS = {"key1": 21, "key2": 20, "key3": 16, "up": 6, "down": 19, "left": 5, "right": 26, "press": 13}
+DIM_AFTER, OFF_AFTER = 60, 300          # seconds without a key press or a status change (OLED burn-in)
+SCAN_SECONDS = 10
+RECONNECT_EVERY = 20
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|[\x01\x02]")
+UNNAMED = re.compile(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}")
+
+
+# ---------------------------------------------------------------- state
+
+def load_state():
+    state = dict(DEFAULTS)
+    try:
+        state.update(json.loads(STATE_FILE.read_text()))
+    except (OSError, ValueError):
+        pass
+    return state
+
+
+def save_state(state):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2))
+
+
+def run(cmd, timeout=15, merge=True, clean=True):
+    """Run a command; return (exit code, output). Never raises. clean strips colour codes."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        out = r.stdout + (r.stderr if merge else "")
+        return r.returncode, ANSI.sub("", out) if clean else out
+    except (subprocess.TimeoutExpired, OSError) as e:
+        return -1, str(e)
+
+
+def hardware_fingerprint():
+    """USB devices and Bluetooth links as sysfs lists them: cheap enough to check every second,
+    and it changes as soon as the FM-1 is plugged in or headphones connect."""
+    seen = []
+    for folder in ("/sys/bus/usb/devices", "/sys/class/bluetooth"):
+        try:
+            seen.append(tuple(sorted(os.listdir(folder))))
+        except OSError:
+            seen.append(())
+    return tuple(seen)
+
+
+# ---------------------------------------------------------------- Bluetooth (bluetoothctl)
+
+def bt(*args, timeout=15):
+    return run(["bluetoothctl", *args], timeout)
+
+
+def parse_info(mac, text):
+    info = {"mac": mac, "uuids": []}
+    for line in text.splitlines():
+        key, sep, value = line.strip().partition(":")
+        if not sep:
+            continue
+        key, value = key.strip(), value.strip()
+        if key == "UUID":
+            info["uuids"].append(value)
+        elif key in ("Name", "Alias", "Icon", "Paired", "Connected", "Trusted"):
+            info[key.lower()] = value
+    return info
+
+
+def is_audio(info):
+    return info.get("icon", "").startswith("audio") or any(u.startswith("Audio Sink") for u in info["uuids"])
+
+
+def parse_devices(text):
+    """bluetoothctl devices -> [(mac, name)], skipping devices that only have an address."""
+    found = []
+    for line in text.splitlines():
+        m = re.match(r"\s*Device ([0-9A-F:]{17}) (.+)", line)
+        if m and not UNNAMED.fullmatch(m.group(2).strip()):
+            found.append((m.group(1), m.group(2).strip()))
+    return found
+
+
+def bt_scan(seconds=SCAN_SECONDS):
+    bt("--timeout", str(seconds), "scan", "on", timeout=seconds + 10)
+    _, out = bt("devices", timeout=5)
+    devices = []
+    for mac, name in parse_devices(out):
+        info = parse_info(mac, bt("info", mac, timeout=5)[1])
+        info.setdefault("name", name)
+        devices.append(info)
+    audio = [d for d in devices if is_audio(d)]
+    return sorted(audio or devices, key=lambda d: d["name"].lower())
+
+
+def bt_error(out):
+    """The last line of bluetoothctl's output, in words that fit the screen."""
+    friendly = (("profile-unavailable", "Audio service not ready"), ("page-timeout", "Headphones off?"),
+                ("Host is down", "Headphones off?"), ("AuthenticationFailed", "Pairing rejected"),
+                ("AuthenticationCanceled", "Pairing cancelled"), ("not available", "Not found - rescan"),
+                ("NotReady", "Bluetooth is off"), ("timed out", "No answer"))
+    for needle, text in friendly:
+        if needle in out:
+            return text
+    lines = [l.strip() for l in out.splitlines() if l.strip()]
+    return lines[-1][:40] if lines else "Failed"
+
+
+def bt_connect(mac):
+    _, out = bt("connect", mac, timeout=25)
+    ok = "Connection successful" in out
+    return ok, "Connected" if ok else bt_error(out)
+
+
+def bt_pair(mac):
+    # The adapter is normally not pairable (strangers can't pair), but then BlueZ pairs without
+    # bonding and forgets the keys on disconnect: be pairable just while pairing
+    bt("pairable", "on", timeout=5)
+    try:
+        bt("remove", mac, timeout=10)          # a stale, unbonded pairing would make "pair" a no-op
+        # BlueZ forgets unpaired devices about 30 s after a scan, and "remove" just did: see it again
+        bt("--timeout", "6", "scan", "on", timeout=16)
+        _, out = bt("--agent", "NoInputNoOutput", "pair", mac, timeout=40)
+    finally:
+        bt("pairable", "off", timeout=5)
+    if "Pairing successful" not in out:
+        return False, bt_error(out)
+    bt("trust", mac)
+    _, info = bt("info", mac, timeout=5)
+    if "Bonded:" in info and "Bonded: yes" not in info:
+        return False, "Paired but not saved"
+    return bt_connect(mac)
+
+
+# ---------------------------------------------------------------- audio (PipeWire)
+
+def pick_nodes(objects, source_match):
+    """From pw-dump's objects: (the FM-1's USB input, the Bluetooth headphones), each a dict or None."""
+    source = fallback = sink = None
+    for o in objects:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        props = (o.get("info") or {}).get("props") or {}
+        cls, name = props.get("media.class", ""), props.get("node.name", "")
+        label = props.get("node.description") or props.get("node.nick") or name
+        node = {"id": o.get("id"), "name": name, "label": label}
+        if cls == "Audio/Source" and name.startswith("alsa_input."):
+            # the USB card name ("Felucca"), not the description ("pid.codes Test PID Analog Stereo")
+            node["label"] = props.get("alsa.card_name") or props.get("node.nick") or label
+            text = " ".join(str(props.get(k, "")) for k in
+                            ("node.name", "node.description", "node.nick", "alsa.card_name", "alsa.long_card_name"))
+            if any(m in text.lower() for m in source_match):
+                source = source or node
+            elif ".usb-" in name:
+                fallback = fallback or node
+        elif cls == "Audio/Sink" and name.startswith("bluez_output."):
+            sink = sink or node
+    return source or fallback, sink
+
+
+def pw_nodes(source_match):
+    code, out = run(["pw-dump", "-N"], timeout=10, merge=False, clean=False)
+    try:
+        return pick_nodes(json.loads(out), source_match) if code == 0 else (None, None)
+    except ValueError:
+        return None, None
+
+
+def get_volume(node_id):
+    _, out = run(["wpctl", "get-volume", str(node_id)], timeout=5)
+    m = re.search(r"Volume:\s*([\d.]+)", out)
+    return round(float(m.group(1)) * 100) if m else None
+
+
+def change_volume(node_id, step):
+    run(["wpctl", "set-volume", "-l", "1.0", str(node_id), f"{abs(step)}%{'+' if step > 0 else '-'}"], timeout=5)
+
+
+def wifi_enabled():
+    """Wi-Fi radio state from NetworkManager: True, False, or None if unknown."""
+    code, out = run(["nmcli", "radio", "wifi"], timeout=5)
+    return {"enabled": True, "disabled": False}.get(out.strip()) if code == 0 else None
+
+
+def set_wifi(on):
+    """NetworkManager keeps the setting across reboots."""
+    run(["sudo", "-n", "nmcli", "radio", "wifi", "on" if on else "off"], timeout=10)
+
+
+class Loopback:
+    """One pw-loopback process from the FM-1 to the headphones, restarted when either changes."""
+
+    def __init__(self):
+        self.proc, self.key = None, None
+
+    def ensure(self, source, sink):
+        key = (source, sink) if source and sink else None
+        if key == self.key and (key is None or self.proc.poll() is None):
+            return
+        self.stop()
+        if key:
+            self.proc = subprocess.Popen(
+                ["pw-loopback",
+                 "--capture-props", f"target.object={source} node.dont-reconnect=true",
+                 "--playback-props", f"target.object={sink} node.dont-reconnect=true"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            self.key = key
+
+    def running(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(3)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.proc, self.key = None, None
+
+
+# ---------------------------------------------------------------- hardware
+
+def pack_pages(img):
+    """A 128x64 1-bit image as the SH1106's 8 pages: per column one byte, bit 0 at the top."""
+    return [img.crop((0, p * 8, 128, p * 8 + 8)).transpose(Image.Transpose.ROTATE_270).tobytes()
+            for p in range(8)]
+
+
+class SH1106:
+    """The HAT's 128x64 OLED on SPI0 CE0, DC on GPIO24, reset on GPIO25."""
+
+    def __init__(self, rotate=0, contrast=128):
+        import gpiod
+        import spidev
+        from gpiod.line import Direction, Value
+        self.on, self.off = Value.ACTIVE, Value.INACTIVE
+        self.pins = gpiod.request_lines(GPIO_CHIP, consumer="fm1-bridge oled", config={
+            (PIN_DC, PIN_RST): gpiod.LineSettings(direction=Direction.OUTPUT, output_value=Value.ACTIVE)})
+        self.spi = spidev.SpiDev()
+        self.spi.open(0, 0)
+        self.spi.max_speed_hz = 8_000_000
+        self.spi.mode = 0
+        self.rotate = rotate
+        self.pins.set_value(PIN_RST, self.off)
+        time.sleep(0.01)
+        self.pins.set_value(PIN_RST, self.on)
+        time.sleep(0.01)
+        # SH1106 128x64; 0xAD 0x8B switches on the panel's DC-DC supply (without it the HAT stays dark)
+        self.cmd(0xAE, 0xD5, 0x80, 0xA8, 0x3F, 0xD3, 0x00, 0x40, 0xAD, 0x8B, 0xA1, 0xC8, 0xDA, 0x12,
+                 0x81, contrast, 0xD9, 0x22, 0xDB, 0x35, 0xA4, 0xA6)
+        self.show(Image.new("1", (128, 64)))
+        self.cmd(0xAF)
+
+    def cmd(self, *values):
+        self.pins.set_value(PIN_DC, self.off)
+        self.spi.writebytes(list(values))
+
+    def show(self, img):
+        if self.rotate:
+            img = img.rotate(self.rotate)
+        for page, data in enumerate(pack_pages(img)):
+            self.cmd(0xB0 + page, 0x02, 0x10)       # the panel's 128 columns start at RAM column 2
+            self.pins.set_value(PIN_DC, self.on)
+            self.spi.writebytes(list(data))
+
+    def contrast(self, value):
+        self.cmd(0x81, value)
+
+    def power(self, on):
+        self.cmd(0xAF if on else 0xAE)
+
+
+class SimDisplay:
+    """Stand-in for the OLED: writes each new frame to DIR as a PNG."""
+
+    def __init__(self, folder):
+        self.folder = Path(folder)
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self.count = 0
+
+    def show(self, img):
+        self.count += 1
+        img.convert("L").resize((512, 256), Image.NEAREST).save(self.folder / f"frame{self.count:03}.png")
+
+    def contrast(self, value):
+        pass
+
+    def power(self, on):
+        pass
+
+
+class KeyTimer:
+    """Turns presses and releases into the app's key events: post(name) on press, or for KEY2/KEY3
+    on release, post(name, True) once held long enough, and up/down repeating while held."""
+
+    HOLD = {"key2": 1.2, "key3": 3.0, "up": 0.4, "down": 0.4}
+    REPEAT = 0.2
+
+    def __init__(self, post):
+        self.post, self.down = post, {}
+
+    def pressed(self, name, now):
+        self.down[name] = {"at": now, "held": False, "next": 0.0}
+        if name not in ("key2", "key3"):
+            self.post(name)
+
+    def released(self, name, now):
+        info = self.down.pop(name, None)
+        if info and name in ("key2", "key3") and not info["held"]:
+            self.post(name)
+
+    def tick(self, now):
+        for name, info in self.down.items():
+            hold = self.HOLD.get(name)
+            if hold and not info["held"] and now - info["at"] >= hold:
+                info["held"], info["next"] = True, now + self.REPEAT
+                self.post(name, True) if name in ("key2", "key3") else self.post(name)
+            elif name in ("up", "down") and info["held"] and now >= info["next"]:
+                info["next"] = now + self.REPEAT
+                self.post(name)
+
+    def timeout(self):
+        """How long the key thread may sleep: forever when nothing is pressed."""
+        return 0.05 if self.down else None
+
+
+def key_names(flip):
+    """GPIO pin -> key name. flip turns the joystick's directions round, for a HAT held the other
+    way up from Waveshare's labels (KEY1-3 keep their names: they are pressed by label)."""
+    turn = {"up": "down", "down": "up", "left": "right", "right": "left"} if flip else {}
+    return {pin: turn.get(name, name) for name, pin in KEYS.items()}
+
+
+def start_keys(post, flip=False):
+    """The HAT's keys and joystick (active low) through libgpiod edge events: the thread sleeps in
+    the kernel until a key changes (lgpio's alert thread kept a Zero W core ~14% busy)."""
+    import datetime
+    import gpiod
+    from gpiod import EdgeEvent
+    from gpiod.line import Bias, Direction, Edge
+    names = key_names(flip)
+    request = gpiod.request_lines(GPIO_CHIP, consumer="fm1-bridge keys", config={
+        tuple(names): gpiod.LineSettings(direction=Direction.INPUT, edge_detection=Edge.BOTH, bias=Bias.PULL_UP,
+                                         debounce_period=datetime.timedelta(milliseconds=20))})
+    timer = KeyTimer(post)
+
+    def body():
+        while True:
+            if request.wait_edge_events(timer.timeout()):
+                for event in request.read_edge_events():
+                    name, now = names[event.line_offset], time.monotonic()
+                    if event.event_type == EdgeEvent.Type.FALLING_EDGE:
+                        timer.pressed(name, now)
+                    else:
+                        timer.released(name, now)
+            timer.tick(time.monotonic())
+
+    threading.Thread(target=body, daemon=True).start()
+    return request
+
+
+# ---------------------------------------------------------------- the app
+
+def font(size, bold=False):
+    path = "/usr/share/fonts/truetype/dejavu/DejaVuSans%s.ttf" % ("-Bold" if bold else "")
+    try:
+        return ImageFont.truetype(path, size)
+    except OSError:
+        return ImageFont.load_default()
+
+
+def fit(draw, text, fnt, width):
+    """Shorten text with an ellipsis until it fits width pixels."""
+    if draw.textlength(text, font=fnt) <= width:
+        return text
+    while text and draw.textlength(text + "…", font=fnt) > width:
+        text = text[:-1]
+    return text + "…"
+
+
+def short_label(label):
+    for suffix in (" Analog Stereo", " Stereo", " Mono"):
+        if label.endswith(suffix):
+            return label[:-len(suffix)]
+    return label
+
+
+class App:
+    def __init__(self, display, state):
+        self.display, self.state = display, state
+        self.events = queue.Queue()
+        self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
+        self.loop = Loopback()
+        self.source = self.sink = None
+        self.volume = None
+        self.auto = True                      # reconnect the last headphones by itself
+        self.connecting = False
+        self.screen = "status"                # or "scan", "settings"
+        self.back_to = "status"               # where left leaves the scan list for
+        self.devices, self.cursor, self.scanning = [], 0, False
+        self.midi = None                      # blemidi.MidiBridge, when BlueZ and mido are there
+        self.wifi, self.next_wifi = None, 0.0
+        self.setting = 0                      # cursor on the settings page
+        self.busy = None                      # text shown while a user action runs
+        self.message, self.message_until = None, 0.0
+        self.last_activity = time.monotonic()
+        self.mode = "on"                      # "on", "dim", "saver"
+        self.frame = self.shown = None
+        self.f_title, self.f_body, self.f_small = font(12, True), font(11), font(9)
+
+    def post(self, *event):
+        self.events.put(event)
+
+    # ---- background work
+
+    def monitor(self):
+        """Scanning PipeWire and the MIDI ports costs the Zero W ~0.25 s of CPU, so scan when sysfs
+        shows a USB or Bluetooth change (then a few times quickly), otherwise only now and then."""
+        next_scan = next_reconnect = 0.0
+        fast_until, seen = 0.0, None
+        while True:
+            now = time.monotonic()
+            fingerprint = hardware_fingerprint()
+            if fingerprint != seen:
+                seen, fast_until = fingerprint, now + 12
+                next_scan = min(next_scan, now + 1.5)       # PipeWire needs a moment to add its nodes
+            if now >= self.next_wifi:
+                self.wifi, self.next_wifi = wifi_enabled(), now + 60
+            if now >= next_scan:
+                self.scan_devices()
+                settled = self.source and self.sink and (not self.midi or self.midi.usb_label())
+                next_scan = now + (2 if now < fast_until else 15 if settled else 6)
+            if (not self.sink and self.auto and self.state["last_mac"] and self.screen == "status"
+                    and now >= next_reconnect and self.bt_lock.acquire(blocking=False)):
+                next_reconnect = now + RECONNECT_EVERY
+                threading.Thread(target=self.reconnect_quietly, daemon=True).start()
+            time.sleep(1)
+
+    def scan_devices(self):
+        if self.midi:
+            self.midi.poll()
+        source, sink = pw_nodes(self.state["source_match"])
+        volume = get_volume(sink["id"]) if sink else None
+        changed = (source, sink) != (self.source, self.sink)
+        if changed or volume != self.volume:
+            self.source, self.sink, self.volume = source, sink, volume
+            self.post("status", changed)
+        self.loop.ensure(source and source["name"], sink and sink["name"])
+
+    def reconnect_quietly(self):
+        try:
+            self.connecting = True
+            self.post("status", False)
+            bt("connect", self.state["last_mac"], timeout=12)
+        finally:
+            self.connecting = False
+            self.bt_lock.release()
+            self.post("status", False)
+
+    def job(self, label, work):
+        """Run a Bluetooth action in the background with label on screen; work() returns (ok, text)."""
+        if self.busy:
+            return
+        self.busy = label
+
+        def body():
+            try:
+                with self.bt_lock:
+                    ok, text = work()
+            except Exception as e:            # keep the UI alive whatever bluetoothctl does
+                ok, text = False, str(e)[:40]
+            self.busy = None
+            if text:
+                self.say(text)
+            self.post("status", True)
+
+        threading.Thread(target=body, daemon=True).start()
+
+    def say(self, text, seconds=3):
+        self.message, self.message_until = text, time.monotonic() + seconds
+
+    # ---- actions
+
+    def start_scan(self):
+        if self.busy or self.scanning:
+            return
+        if self.screen != "scan":
+            self.back_to = self.screen        # left goes back where the scan was started from
+        self.screen, self.devices, self.cursor, self.scanning = "scan", [], 0, True
+
+        def body():
+            devices = []
+            try:
+                with self.bt_lock:
+                    devices = bt_scan()
+            finally:
+                self.devices, self.scanning = devices, False
+            self.post("status", True)
+
+        threading.Thread(target=body, daemon=True).start()
+
+    def pair_selected(self):
+        device = self.devices[self.cursor]
+
+        def work():
+            ok, text = bt_pair(device["mac"])
+            if ok:
+                self.state.update(last_mac=device["mac"], last_name=device["name"])
+                save_state(self.state)
+                self.auto, self.screen = True, "status"
+            return ok, text
+
+        self.job("Pairing " + device["name"], work)
+
+    def reconnect(self):
+        if not self.state["last_mac"]:
+            self.say("No headphones yet: KEY1")
+            return
+        self.auto = True
+        self.job("Connecting", lambda: bt_connect(self.state["last_mac"]))
+
+    def disconnect(self):
+        if not self.state["last_mac"]:
+            return
+        self.auto = False
+
+        def work():
+            bt("disconnect", self.state["last_mac"], timeout=10)
+            return True, "Disconnected (KEY2 = reconnect)"
+
+        self.job("Disconnecting", work)
+
+    def volume_step(self, step):
+        if not self.sink:
+            return
+        node = self.sink["id"]
+        if self.volume is not None:
+            self.volume = max(0, min(100, self.volume + step))
+        threading.Thread(target=change_volume, args=(node, step), daemon=True).start()
+
+    def settings_rows(self):
+        """(key, label, value) for the settings page, in cursor order."""
+        speaker = (short_label(self.sink["label"]) if self.sink else self.state["last_name"]) or "none"
+        audio = "on" if self.sink else "..." if self.connecting else "off"
+        midi = "n/a" if not self.midi else "on" if self.midi.enabled else "off"
+        left = self.midi.pairing_until - time.monotonic() if self.midi else 0
+        wifi = {True: "on", False: "off", None: "?"}[self.wifi]
+        return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("midi", "BLE MIDI", midi),
+                ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"), ("wifi", "Wi-Fi", wifi)]
+
+    def change_setting(self):
+        key = self.settings_rows()[self.setting][0]
+        if key == "speaker" or (key == "audio" and not self.state["last_mac"]):
+            self.start_scan()                 # pick and pair a speaker or headphones
+        elif key == "audio":
+            self.disconnect() if self.sink else self.reconnect()
+        elif key == "midi" and self.midi:
+            on = not self.midi.enabled
+            self.midi.set_enabled(on)
+            self.state["midi_enabled"] = on
+            save_state(self.state)
+        elif key == "pairing" and self.midi:
+            self.midi.open_pairing()
+            self.say("Pair from your device now (2 min)")
+        elif key == "wifi" and self.wifi is not None:
+            on = not self.wifi
+            self.wifi = on
+            threading.Thread(target=set_wifi, args=(on,), daemon=True).start()
+            self.say("Wi-Fi on: SSH works again" if on else "Wi-Fi off (stays off)")
+
+    def shutdown(self):
+        self.busy = "Shutting down"
+        self.render(force=True)
+        self.loop.stop()
+        time.sleep(1.5)
+        self.display.power(False)
+        run(["sudo", "-n", "systemctl", "poweroff"], timeout=10)
+
+    # ---- input
+
+    def on_key(self, key, held=False):
+        self.last_activity = time.monotonic()
+        if self.mode != "on":                 # the first press only wakes the screen
+            self.wake()
+            return
+        if key == "key3":
+            if held:
+                self.shutdown()
+            else:
+                self.say("Hold KEY3 to power off")
+            return
+        if self.screen == "status":
+            if key == "key1":
+                self.start_scan()
+            elif key == "key2":
+                self.disconnect() if held else self.reconnect()
+            elif key in ("up", "down"):
+                self.volume_step(5 if key == "up" else -5)
+            elif key == "right":
+                self.screen, self.setting, self.next_wifi = "settings", 0, 0.0    # fresh Wi-Fi state
+        elif self.screen == "settings":
+            if key in ("up", "down"):
+                self.setting = (self.setting + (1 if key == "down" else -1)) % len(self.settings_rows())
+            elif key in ("press", "right"):
+                self.change_setting()
+            elif key == "left":
+                self.screen = "status"
+        else:
+            if key in ("up", "down") and self.devices:
+                self.cursor = (self.cursor + (1 if key == "down" else -1)) % len(self.devices)
+            elif key in ("press", "right") and self.devices and not self.scanning:
+                self.pair_selected()
+            elif key == "key1":
+                self.start_scan()
+            elif key == "left" and not self.busy:
+                self.screen = self.back_to
+
+    def wake(self):
+        if self.mode != "on":
+            self.display.power(True)
+            self.display.contrast(self.state["contrast"])
+            self.mode = "on"
+
+    def screensaver(self):
+        idle = time.monotonic() - self.last_activity
+        if self.busy or self.scanning:
+            idle = 0
+        if idle > OFF_AFTER and self.mode != "saver":
+            self.display.contrast(1)
+            self.mode = "saver"               # one dim word that moves: alive, and no burn-in
+        elif DIM_AFTER < idle <= OFF_AFTER and self.mode == "on":
+            self.display.contrast(1)
+            self.mode = "dim"
+
+    # ---- drawing
+
+    def view(self, now):
+        """Everything the screen shows right now. Drawing a frame takes ~75 ms on a Zero W, so
+        render() only draws when this changes."""
+        if self.mode == "saver":
+            return ("saver", int(now // 20), self.loop.running(), bool(self.midi and self.midi.peer))
+        return (self.screen, self.busy and (self.busy, int(now * 2) % 4),
+                self.message if now < self.message_until else None, self.loop.running(),
+                self.source and self.source["label"], self.sink and self.sink["label"], self.connecting,
+                self.state["last_name"], self.auto, self.volume,
+                self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4),
+                tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
+                tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting)
+
+    def render(self, force=False):
+        now = time.monotonic()
+        view = self.view(now)
+        if view == self.shown and not force:
+            return
+        self.shown = view
+        img = Image.new("1", (128, 64))
+        d = ImageDraw.Draw(img)
+        if self.mode == "saver" and not force:
+            self.draw_saver(d, now)
+        else:
+            {"scan": self.draw_scan, "settings": self.draw_settings}.get(self.screen, self.draw_status)(d)
+            if self.busy:
+                dots = "." * (int(now * 2) % 4)
+                self.draw_box(d, self.busy + dots)
+            elif self.message and now < self.message_until:
+                self.draw_box(d, self.message)
+        data = img.tobytes()
+        if force or data != self.frame:
+            self.frame = data
+            self.display.show(img)
+
+    def draw_status(self, d):
+        live = self.loop.running()
+        d.text((0, 0), "FM-1 > BT", font=self.f_title, fill=1)
+        tag = "LIVE" if live else "idle"
+        w = d.textlength(tag, font=self.f_small)
+        if live:
+            d.rectangle((124 - w, 0, 127, 11), fill=1)
+        d.text((126 - w, 1), tag, font=self.f_small, fill=0 if live else 1)
+        d.line((0, 14, 127, 14), fill=1)
+        if self.sink:
+            out = short_label(self.sink["label"])
+        elif self.connecting:
+            out = "connecting…"
+        elif self.state["last_name"]:
+            out = self.state["last_name"] + (" (off)" if self.auto else " (paused)")
+        else:
+            out = "none: press KEY1"
+        rows = (("IN", short_label(self.source["label"]) if self.source else "FM-1 not found"),
+                ("OUT", out),
+                ("MIDI", self.midi_text()))
+        for i, (name, value) in enumerate(rows):
+            y = 17 + i * 12
+            d.text((0, y + 1), name, font=self.f_small, fill=1)
+            d.text((26, y), fit(d, value, self.f_body, 94), font=self.f_body, fill=1)
+        if self.midi and time.monotonic() - self.midi.activity() < 0.4:
+            d.ellipse((123, 44, 127, 48), fill=1)                     # MIDI traffic
+        vol = f"VOL {self.volume}%" if self.volume is not None else "VOL --"
+        d.text((0, 53), vol, font=self.f_small, fill=1)
+        hint = "settings >"
+        d.text((128 - d.textlength(hint, font=self.f_small), 53), hint, font=self.f_small, fill=1)
+
+    def draw_saver(self, d, now):
+        """After OFF_AFTER idle: "FM-1 LIVE" (or idle) in small type, moving every 20 s."""
+        text = "FM-1 " + ("LIVE" if self.loop.running() else "idle")
+        if self.midi and self.midi.peer:
+            text += " +MIDI"
+        w = int(d.textlength(text, font=self.f_small))
+        step = int(now // 20)
+        x, y = (step * 37) % (128 - w), (step * 23) % 54
+        d.text((x, y), text, font=self.f_small, fill=1)
+
+    def midi_text(self):
+        if not self.midi:
+            return "not available"
+        if self.midi.error:
+            return "BT error"
+        if not self.midi.enabled:
+            return "off"
+        usb = "" if self.midi.usb_label() else " (no FM-1)"
+        return (self.midi.peer + usb) if self.midi.peer else "waiting" + usb
+
+    def draw_settings(self, d):
+        rows = self.settings_rows()
+        d.text((0, 0), "Settings", font=self.f_title, fill=1)
+        where = f"{self.setting + 1}/{len(rows)}"
+        d.text((127 - d.textlength(where, font=self.f_small), 2), where, font=self.f_small, fill=1)
+        d.line((0, 14, 127, 14), fill=1)
+        top = min(max(0, self.setting - 1), max(0, len(rows) - 3))      # three rows, scrolling
+        for i, (_, name, value) in enumerate(rows[top:top + 3]):
+            y, selected = 16 + i * 12, top + i == self.setting
+            if selected:
+                d.rectangle((0, y, 127, y + 11), fill=1)
+            d.text((2, y), name, font=self.f_body, fill=0 if selected else 1)
+            value = fit(d, value, self.f_body, 70)
+            w = d.textlength(value, font=self.f_body)
+            d.text((125 - w, y), value, font=self.f_body, fill=0 if selected else 1)
+        d.text((0, 53), "press = change   < back", font=self.f_small, fill=1)
+
+    def draw_scan(self, d):
+        d.text((0, 0), "BT audio out", font=self.f_title, fill=1)
+        d.line((0, 14, 127, 14), fill=1)
+        if self.scanning:
+            d.text((0, 18), "Searching…", font=self.f_body, fill=1)
+            d.text((0, 32), "Put headphones in", font=self.f_small, fill=1)
+            d.text((0, 42), "pairing mode now", font=self.f_small, fill=1)
+        elif not self.devices:
+            d.text((0, 18), "None found", font=self.f_body, fill=1)
+            d.text((0, 34), "K1 scan again", font=self.f_small, fill=1)
+            d.text((0, 44), "< back", font=self.f_small, fill=1)
+        else:
+            top = min(max(0, self.cursor - 1), max(0, len(self.devices) - 3))
+            for row, device in enumerate(self.devices[top:top + 3]):
+                y, selected = 16 + row * 12, top + row == self.cursor
+                if selected:
+                    d.rectangle((0, y, 127, y + 11), fill=1)
+                d.text((2, y), fit(d, device["name"], self.f_body, 122), font=self.f_body, fill=0 if selected else 1)
+            d.text((0, 53), "press = pair   K1 = rescan", font=self.f_small, fill=1)
+
+    def draw_box(self, d, text):
+        words, lines, line = text.split(), [], ""
+        for word in words:
+            trial = (line + " " + word).strip()
+            if d.textlength(trial, font=self.f_body) <= 116 or not line:
+                line = trial
+            else:
+                lines.append(line)
+                line = word
+        lines = (lines + [line])[:3]
+        h = 6 + 12 * len(lines)
+        top = (64 - h) // 2
+        d.rectangle((2, top, 125, top + h), fill=0, outline=1)
+        for i, l in enumerate(lines):
+            l = fit(d, l, self.f_body, 116)
+            d.text(((128 - d.textlength(l, font=self.f_body)) / 2, top + 3 + 12 * i), l, font=self.f_body, fill=1)
+
+    # ---- main loop
+
+    def run(self):
+        threading.Thread(target=self.monitor, daemon=True).start()   # starts pw-loopback: keeps priority
+        if hasattr(os, "nice"):
+            os.nice(10)     # Linux: this thread only (drawing, ~75 ms a frame), and threads it starts later
+        while True:
+            try:
+                event = self.events.get(timeout=0.25)      # 4 Hz: the MIDI dot and countdowns
+            except queue.Empty:
+                event = None
+            if event and event[0] in KEYS:
+                self.on_key(event[0], len(event) > 1 and event[1])
+            elif event and event[0] == "status" and event[1]:
+                self.last_activity = time.monotonic()     # connects and disconnects wake the screen
+                self.wake()
+            self.screensaver()
+            self.render()
+
+
+def test_screen(display):
+    img = Image.new("1", (128, 64))
+    d = ImageDraw.Draw(img)
+    d.rectangle((0, 0, 127, 63), outline=1)
+    d.polygon(((64, 4), (54, 18), (74, 18)), fill=1)
+    d.text((40, 22), "TOP", font=font(12, True), fill=1)
+    d.text((6, 40), "KEY1-3 on the left", font=font(9), fill=1)
+    d.text((6, 50), "joystick on the right", font=font(9), fill=1)
+    display.show(img)
+
+
+def main():
+    state = load_state()
+    sim, test = "--sim" in sys.argv, "--test-screen" in sys.argv
+    midi = None
+    if not sim and not test:
+        # MIDI gets its own process, forked before any thread or hardware exists (App.run lowers
+        # the drawing thread's priority so the kernel runs MIDI and audio first)
+        import blemidi
+        midi = blemidi.MidiProcess(state["source_match"], state["midi_enabled"])
+        midi.start()
+    if sim:
+        display = SimDisplay(sys.argv[sys.argv.index("--sim") + 1])
+    else:
+        display = SH1106(state["rotate"], state["contrast"])
+    if test:
+        test_screen(display)
+        time.sleep(15)
+        return
+    app = App(display, state)
+    app.midi = midi
+    if not sim:
+        flip = state["flip_joystick"]
+        if flip is None:                      # follow the screen: rotate 0 is upside down to Waveshare's labels
+            flip = state["rotate"] == 0
+        app.keys = start_keys(app.post, flip)
+    try:
+        app.run()
+    finally:
+        app.loop.stop()
+
+
+if __name__ == "__main__":
+    main()
