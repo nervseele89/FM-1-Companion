@@ -47,6 +47,7 @@ def make_app():
     app.loop, app.wifi = Loop(), True
     app.started = []
     app.start_job = lambda args, title, show=True: app.started.append(args)
+    app.save_settings = lambda: None          # never this computer's real settings file
     return app
 
 
@@ -134,6 +135,54 @@ def test_flows():
     assert app.screen == "settings"
 
 
+def test_auto_backup_schedule():
+    app = make_app()
+
+    class Midi:                                            # the FM-1's MIDI is there
+        enabled, error, peer, pairing_until = True, None, None, 0.0
+
+        def usb_label(self):
+            return "Felucca"
+
+        def activity(self):
+            return 0.0
+
+    app.midi, app.job_busy = Midi(), lambda: None
+    app.autobackup_flag.unlink(missing_ok=True)
+    # the menu row cycles off -> at start -> 2 -> 5 -> 10 -> 30 -> off ...
+    app.screen, app.lib_cursor = "library", 6
+    assert app.library_rows()[6][2] == "at start"
+    seen = []
+    for _ in range(6):
+        keys(app, "press")
+        seen.append(app.library_rows()[6][2])
+    assert seen == ["2 min", "5 min", "10 min", "30 min", "off", "at start"], seen
+    snap(app, "library-auto")
+    # at start: one backup, then none
+    app.started.clear()
+    app.auto_backup()
+    app.auto_backup()
+    assert app.started == [["backup", "--auto"]]
+    # every 2 minutes
+    app.state["auto_backup"] = 2
+    app.last_auto -= 60
+    app.auto_backup()
+    assert len(app.started) == 1                           # only 1 minute so far
+    app.last_auto -= 61
+    app.auto_backup()
+    assert len(app.started) == 2
+    # off: nothing, not even at start-up
+    app.state["auto_backup"] = "off"
+    app.autobackup_flag.unlink()
+    app.last_auto -= 1000
+    app.auto_backup()
+    assert len(app.started) == 2
+    # no FM-1: nothing
+    app.state["auto_backup"], app.midi = 5, None
+    app.auto_backup()
+    assert len(app.started) == 2
+
+
 def test_job_screen_and_status():
     app = make_app()
     app.screen, app.job_title = "job", "Firmware"
@@ -162,7 +211,8 @@ def test_job_screen_and_status():
 
 
 if __name__ == "__main__":
-    for name, fn in [("test_flows", test_flows), ("test_job_screen_and_status", test_job_screen_and_status)]:
+    for name, fn in [("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
+                     ("test_job_screen_and_status", test_job_screen_and_status)]:
         fn()
         print("ok", name)
     print("all passed")

@@ -241,8 +241,27 @@ def job_backup(auto=False):
         dev = connect()
         dev.require_backup()
         data = dev.backup(job.progress("Backing up"))
+        if auto:                               # timed backups: no new file when nothing changed
+            latest = newest_auto()
+            if latest and same_content(latest, data):
+                job.done(f"No changes since {latest.name[11:13]}:{latest.name[13:15]}", file=latest.name,
+                         unchanged=True)
+                return
         path = write_backup(data, "auto" if auto else "manual")
         job.done(f"Backed up {dev.version}", file=path.name)
+
+
+def newest_auto():
+    autos = sorted(folder("backups").glob("*_auto.json"))
+    return autos[-1] if autos else None
+
+
+def same_content(path, data):
+    """the backup file holds exactly the objects in data (dates and firmware strings aside)"""
+    try:
+        return sloop.objects_of(sloop.load_json(path)) == sloop.objects_of(data)
+    except sloop.SloopError:
+        return False
 
 
 def job_restore(file):

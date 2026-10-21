@@ -135,6 +135,7 @@ backups made there can be restored from the box.
 | **Load sample ›** | Pick a WAV, then a slot (USR1–4). |
 | **Firmware ›** | Pick a firmware file to install; **Get SLOOP update** (with Wi-Fi on) downloads the newest SLOOP release from GitHub first. |
 | **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
+| **Auto backup** | Press to choose: **off**, **at start**, or every **2**, **5**, **10** or **30 min**. Remembered. |
 
 ![Job screen](../docs/images/screen-job.png)
 
@@ -144,9 +145,12 @@ backups made there can be restored from the box.
 - It refuses while the FM-1's song plays (stop it first).
 - During a firmware install the screen says *Don't unplug the FM-1*, KEY3 won't shut down, and
   Bluetooth MIDI pauses. It takes about 2 minutes. Your projects, presets and samples stay.
-- **Automatic backups:** whenever the box starts with the FM-1 connected, it backs up by itself (the
-  status screen shows *backup NN%* in its corner). The newest 20 automatic backups are kept; the ones
-  you make, and those made before a restore, a load or an install, are never deleted.
+- **Automatic backups** (Library → *Auto backup*): *at start* (the default) backs up once whenever the
+  box starts with the FM-1 connected; *2 / 5 / 10 / 30 min* also backs up at that interval while the FM-1
+  is connected. A backup only reads the FM-1 (about 7 seconds), so it's fine while the song plays, and
+  the status screen shows *backup NN%* in its corner. If nothing changed since the last automatic
+  backup, no new file is kept. The newest 20 automatic backups are kept; the ones you make, and those
+  made before a restore, a load or an install, are never deleted.
 
 **From your phone or computer:** with Wi-Fi on (Settings → Wi-Fi), open **http://fm1bridge.local**
 (or the Pi's IP address). The page lists the library and does everything the box does, plus:

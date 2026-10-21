@@ -176,6 +176,28 @@ def test_library_jobs():
     assert listing["projects"][0]["title"] == "Night Drive"
 
 
+def test_timed_backups_skip_unchanged():
+    fake = fake_fm1.FakeFM1()
+    use(fake)
+    backups = TMP / "library" / "backups"
+    library.job_backup(auto=True)
+    count = len(list(backups.glob("*_auto.json")))
+    library.job_backup(auto=True)                          # nothing changed: no new file
+    state = library.read_state()
+    assert state["result"].get("unchanged") and "No changes" in state["message"], state
+    assert len(list(backups.glob("*_auto.json"))) == count
+    newest = library.newest_auto()
+    fake.objects[2] = fake_fm1.project(6, 99)             # project A edited on the FM-1
+    import time
+    time.sleep(1.1)                                        # (file names carry the second)
+    library.job_backup(auto=True)
+    assert library.newest_auto() != newest and library.same_content(library.newest_auto(), {
+        "format": "sloop-backup", "version": 1,
+        "objects": sloop.load_json(library.newest_auto())["objects"]})
+    library.job_backup()                                   # a manual backup is always saved
+    assert library.read_state()["result"].get("unchanged") is None
+
+
 def test_job_errors_are_reported():
     fake = fake_fm1.FakeFM1()
     use(fake)

@@ -37,6 +37,7 @@ DEFAULTS = {
     "last_name": None,
     "flip_joystick": None,  # None: match the screen; true/false to force
     "midi_enabled": True,
+    "auto_backup": "boot",  # "off", "boot" (once at start-up), or minutes between backups: 2, 5, 10, 30
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -465,6 +466,9 @@ class App(LibraryScreens):
 
     def post(self, *event):
         self.events.put(event)
+
+    def save_settings(self):
+        save_state(self.state)
 
     # ---- background work
 

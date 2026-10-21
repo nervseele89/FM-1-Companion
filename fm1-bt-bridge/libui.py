@@ -15,6 +15,8 @@ SLOTS = ["USR1", "USR2", "USR3", "USR4"]
 TARGETS = [("working", "Working project"), ("A", "Project A"), ("B", "Project B"), ("C", "Project C"),
            ("D", "Project D")]
 WRITES = ("restore", "load-project", "load-sample", "flash")
+AUTO_CHOICES = ["off", "boot", 2, 5, 10, 30]            # the "auto_backup" setting: minutes between backups
+AUTO_LABELS = {"off": "off", "boot": "at start"}
 
 
 def job_running(state):
@@ -52,6 +54,7 @@ class LibraryScreens:
         self.job_title, self.job_back = "", "library"
         self.job_state, self.job_read = None, 0.0
         self.autobackup_flag = Path(library.RUNTIME) / "fm1-autobackup.done"
+        self.last_auto = time.monotonic()     # the interval counts from start-up (or the last auto backup)
 
     # ---- jobs
     def library_state(self, now=None):
@@ -74,15 +77,37 @@ class LibraryScreens:
             self.job_title, self.job_back = title, self.screen if self.screen != "confirm" else "library"
             self.screen = "job"
 
+    def auto_mode(self):
+        mode = self.state.get("auto_backup", "boot")
+        return mode if mode in AUTO_CHOICES else "boot"
+
     def auto_backup(self):
-        """once per boot, when the FM-1's MIDI is there and nothing else runs"""
-        if self.autobackup_flag.exists() or not (self.midi and self.midi.usb_label()) or self.job_busy():
+        """At start-up (once per boot) unless off, then every N minutes if set: when the FM-1's MIDI is there
+        and no other job runs. library.py saves no new file when nothing changed."""
+        mode = self.auto_mode()
+        if mode == "off" or not (self.midi and self.midi.usb_label()) or self.job_busy():
             return
-        try:
-            self.autobackup_flag.write_text(str(time.time()))
-        except OSError:
+        now = time.monotonic()
+        if not self.autobackup_flag.exists():
+            try:
+                self.autobackup_flag.parent.mkdir(parents=True, exist_ok=True)
+                self.autobackup_flag.write_text(str(time.time()))
+            except OSError:
+                return
+        elif not (isinstance(mode, int) and now - self.last_auto >= mode * 60):
             return
+        self.last_auto = now
         self.start_job(["backup", "--auto"], "Auto backup", show=False)
+
+    def cycle_auto(self):
+        mode = AUTO_CHOICES[(AUTO_CHOICES.index(self.auto_mode()) + 1) % len(AUTO_CHOICES)]
+        self.state["auto_backup"] = mode
+        self.last_auto = time.monotonic()
+        self.save_settings()
+
+    @staticmethod
+    def auto_label(mode):
+        return AUTO_LABELS.get(mode) or f"{mode} min"
 
     def web_request(self, request):
         """the web page asked to write to the FM-1: show it to be confirmed here (hold press)"""
@@ -101,19 +126,24 @@ class LibraryScreens:
 
     # ---- the menu
     def library_rows(self):
-        rows = [("backup", "Back up now"), ("restore", "Restore ›"), ("project", "Load project ›"),
-                ("sample", "Load sample ›"), ("firmware", "Firmware ›"), ("sd", "Import SD card")]
-        return rows
+        """(key, label, value)"""
+        return [("backup", "Back up now", ""), ("restore", "Restore ›", ""), ("project", "Load project ›", ""),
+                ("sample", "Load sample ›", ""), ("firmware", "Firmware ›", ""), ("sd", "Import SD card", ""),
+                ("auto", "Auto backup", self.auto_label(self.auto_mode()))]
 
     def open_library(self):
         self.screen, self.lib_cursor = "library", 0
 
     def library_choose(self):
         key = self.library_rows()[self.lib_cursor][0]
-        listing = library.listing()
         if key == "backup":
             self.start_job(["backup"], "Backup")
-        elif key == "restore":
+            return
+        if key == "auto":
+            self.cycle_auto()
+            return
+        listing = library.listing()
+        if key == "restore":
             items = [(short_date(b["name"]), short_firmware(b.get("firmware")), b["name"])
                      for b in listing["backups"] if not b.get("damaged")]
             self.open_pick("Restore", items, self.pick_restore, "No backups yet")
@@ -239,7 +269,7 @@ class LibraryScreens:
     def library_view(self, now):
         state = self.library_state(now) if self.screen in ("job", "status") else None
         if self.screen == "library":
-            return ("library", self.lib_cursor)
+            return ("library", self.lib_cursor, self.auto_mode())
         if self.screen == "pick":
             return ("pick", self.pick["title"], self.pick["cursor"], tuple(i[:2] for i in self.pick["items"]))
         if self.screen == "confirm":
@@ -267,7 +297,7 @@ class LibraryScreens:
         d.text((0, 53), footer, font=self.f_small, fill=1)
 
     def draw_library(self, d):
-        self.draw_list(d, "Library", [(label, "") for _, label in self.library_rows()], self.lib_cursor,
+        self.draw_list(d, "Library", [(label, value) for _, label, value in self.library_rows()], self.lib_cursor,
                        "press = choose   < back")
 
     def draw_pick(self, d):
