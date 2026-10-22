@@ -6,7 +6,7 @@
 (1:46, with sound): the box's own screens, all eleven meters, settings, the MIDI matrix and the library,
 with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
 
-![The bridge: a Pi Zero W with the Waveshare OLED HAT, streaming the FM-1 to a JBL Go 3](docs/images/device.jpg)
+![The box: a Pi Zero W with the Waveshare OLED HAT, its FM-1 on SLOOP 2.8, playing on a JBL Go 3 with an SMK-37 keyboard](docs/images/device.jpg)
 
 A pocket-sized companion box for the **M-VAVE FM-1** pocket synth running custom firmware such as
 [Sloop](https://github.com/isod89/sloop-fm1). It started as a way to add the Bluetooth those firmwares leave switched off, and grew into a small studio
