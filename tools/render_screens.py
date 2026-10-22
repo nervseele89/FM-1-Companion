@@ -111,6 +111,10 @@ def main():
         app.render()
         oled(display.image).save(out / f"screen-{name}.png", optimize=True)
         print("wrote", out / f"screen-{name}.png")
+    display = Capture()
+    bridge.splash(display)
+    oled(display.image).save(out / "screen-starting.png", optimize=True)
+    print("wrote", out / "screen-starting.png")
     meters_sheet(state, out)
 
 
@@ -155,6 +159,9 @@ def meters_sheet(state, out):
             app.render(force=True)
             time.sleep(0.1)
         frames.append(oled(display.image))
+        name = f"screen-meter-{meters.METERS[i].lower()}.png"
+        frames[-1].save(out / name, optimize=True)
+        print("wrote", out / name)
     w, h, gap = frames[0].width, frames[0].height, 12
     sheet = Image.new("RGB", (2 * w + gap, 2 * h + gap), (30, 30, 30))
     for i, frame in enumerate(frames):

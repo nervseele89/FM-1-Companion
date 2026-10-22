@@ -17,6 +17,10 @@ Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, connected to the FM-1 by USB
   so they also open in SLOOP's web editor.
 - **Its own screen and controls:** status, pairing, settings and the library on the HAT's OLED, keys and
   joystick.
+- **Audio meters (v2.1):** the FM-1's sound as level bars, VU needles, a spectrum or a scope (joystick
+  left from the status screen; up/down picks one).
+- **Ready in under a minute (v2.1):** Raspberry Pi OS Trixie took almost 3 minutes to start the bridge on
+  a Pi Zero W. The installer trims that to about 54 s, and "Starting..." shows on the screen meanwhile.
 
 ```
                          ┌──Bluetooth A2DP───▶ headphones / speaker
@@ -27,7 +31,8 @@ FM-1 ──USB──▶ Pi Zero W ─┤
 Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 and 2.8 on the FM-1, a JBL Go 3
 speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI. The library was tested on the real FM-1 with
 a backup, a restore (read back byte for byte), a project load, a sample load and the update from
-SLOOP 2.7.1 to 2.8 (projects, presets and samples kept).
+SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The v2.1 meters were checked on the box with
+music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
 ## Screens
 
@@ -39,8 +44,20 @@ SLOOP 2.7.1 to 2.8 (projects, presets and samples kept).
 | **Library:** back up, restore, load a project or a sample, install firmware, import from the SD card. Writes ask you to hold the joystick press for 2 seconds, and back up first. | **A job running:** here a SLOOP update, about 2 minutes. |
 | ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |
 | **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. | **Pairing**, then it's remembered and reconnects by itself. |
-| ![Screensaver](docs/images/screen-screensaver.png) | |
-| **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. | |
+| ![Screensaver](docs/images/screen-screensaver.png) | ![Starting](docs/images/screen-starting.png) |
+| **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. | **Starting:** shown as soon as the bridge opens the screen at boot, until the status screen is ready. |
+
+### Meters (v2.1)
+
+Joystick left from the status screen. Up/down switches meter (the box remembers your choice), right goes
+back. The screen stays on while sound plays.
+
+| | |
+|---|---|
+| ![Bars](docs/images/screen-meter-bars.png) | ![VU](docs/images/screen-meter-vu.png) |
+| **Bars:** left and right peak level from −48 to 0 dBFS, with a peak hold and CLIP. | **VU:** two needles with real VU ballistics (0 VU = −18 dBFS); the dot lights on peaks. |
+| ![Spectrum](docs/images/screen-meter-spectrum.png) | ![Scope](docs/images/screen-meter-scope.png) |
+| **Spectrum:** 16 bands from 50 Hz to 7.5 kHz, with falling peak caps. | **Scope:** the waveform, held steady on a rising zero crossing. |
 
 The screen images are drawn by the bridge's own code (`tools/render_screens.py`).
 
@@ -83,6 +100,9 @@ sudo reboot
   current limit. Connect the FM-1 first, or use a powered USB hub.
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send
   each note in its own packet.
+- **Start-up still takes about a minute** on a Pi Zero W's single core; Wi-Fi comes up about 40 s
+  after the bridge. The optional `config/fm1-native-wifi` step (see the
+  [box README](fm1-bt-bridge/README.md)) saves NetworkManager about a minute more.
 
 ## License
 
