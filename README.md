@@ -63,13 +63,14 @@ sudo reboot
 | `fm1-bt-bridge/bridge.py` | The OLED app: status and settings screens, headphone pairing, audio routing (PipeWire), keys |
 | `fm1-bt-bridge/blemidi.py` | The Bluetooth LE MIDI service (BlueZ) and its link to the FM-1's USB MIDI, in a process of its own |
 | `fm1-bt-bridge/libui.py` | The Library screens on the box |
+| `fm1-bt-bridge/meters.py` | The meter screen: level bars, VU needles, spectrum, scope |
 | `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
 | `fm1-bt-bridge/sloop.py` | SLOOP's editor protocol over USB MIDI: backups, projects, sample slots |
 | `fm1-bt-bridge/web.py` | The library's web page (http://fm1bridge.local while Wi-Fi is on) |
 | `fm1-bt-bridge/vendor/sloop/` | SLOOP's firmware installer and sample converter, copied unchanged (GPL-3.0, credited in `VENDORED.md`) |
 | `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot services on the Pi |
-| `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd and SD-card helper configuration |
-| `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for the library, its screens and the web page (`python tests/test_library.py` etc.; needs mido and Pillow) |
+| `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd, swap, Wi-Fi and SD-card helper configuration |
+| `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for the library, its screens, the meters and the web page (`python tests/test_library.py` etc.; needs mido, Pillow and numpy) |
 | `tools/midi_timing.py` | Analyses the bridge's Bluetooth MIDI timing log (`/dev/shm/fm1-midi-timing.log` on the Pi) |
 | `tools/render_screens.py` | Draws the OLED screens as PNG files for this README, without a Pi |
 | `docs/images/` | The photo and screen images |

@@ -28,6 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import library
 from libui import LibraryScreens
+from meters import MeterScreens
 
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
@@ -273,8 +274,8 @@ class Loopback:
 
 def pack_pages(img):
     """A 128x64 1-bit image as the SH1106's 8 pages: per column one byte, bit 0 at the top."""
-    return [img.crop((0, p * 8, 128, p * 8 + 8)).transpose(Image.Transpose.ROTATE_270).tobytes()
-            for p in range(8)]
+    data = img.transpose(Image.Transpose.ROTATE_270).tobytes()   # per column 8 bytes, the bottom page first
+    return [data[7 - p::8] for p in range(8)]
 
 
 class SH1106:
@@ -436,12 +437,13 @@ def short_label(label):
     return label
 
 
-class App(LibraryScreens):
+class App(LibraryScreens, MeterScreens):
     fit = staticmethod(fit)
 
     def __init__(self, display, state):
         self.display, self.state = display, state
         self.library_init()
+        self.meter_init()
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback()
@@ -677,7 +679,7 @@ class App(LibraryScreens):
             else:
                 self.say("Hold KEY3 to power off")
             return
-        if self.library_key(key, held):
+        if self.meter_key(key, held) or self.library_key(key, held):
             return
         if self.screen == "status":
             if key == "key1":
@@ -688,6 +690,8 @@ class App(LibraryScreens):
                 self.volume_step(5 if key == "up" else -5)
             elif key == "right":
                 self.screen, self.setting, self.next_wifi = "settings", 0, 0.0    # fresh Wi-Fi state
+            elif key == "left":
+                self.open_meters()
         elif self.screen == "settings":
             if key in ("up", "down"):
                 self.setting = (self.setting + (1 if key == "down" else -1)) % len(self.settings_rows())
@@ -736,7 +740,7 @@ class App(LibraryScreens):
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
                 tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting,
-                self.library_view(now))
+                self.library_view(now), self.meter_view(now))
 
     def render(self, force=False):
         now = time.monotonic()
@@ -744,13 +748,14 @@ class App(LibraryScreens):
         if view == self.shown and not force:
             return
         self.shown = view
-        img = Image.new("1", (128, 64))
+        img = self.meter_image(now) if self.screen == "meter" and self.mode != "saver" else Image.new("1", (128, 64))
         d = ImageDraw.Draw(img)
         if self.mode == "saver" and not force:
             self.draw_saver(d, now)
         else:
             {"scan": self.draw_scan, "settings": self.draw_settings, "library": self.draw_library,
-             "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job}.get(
+             "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job,
+             "meter": lambda d: None}.get(
                 self.screen, self.draw_status)(d)
             if self.busy:
                 dots = "." * (int(now * 2) % 4)
@@ -880,7 +885,8 @@ class App(LibraryScreens):
             os.nice(10)     # Linux: this thread only (drawing, ~75 ms a frame), and threads it starts later
         while True:
             try:
-                event = self.events.get(timeout=0.25)      # 4 Hz: the MIDI dot and countdowns
+                # 4 Hz: the MIDI dot and countdowns; 10 Hz for the meters
+                event = self.events.get(timeout=0.1 if self.screen == "meter" and self.mode != "saver" else 0.25)
             except queue.Empty:
                 event = None
             if event and event[0] in KEYS:
@@ -905,16 +911,18 @@ def test_screen(display):
     display.show(img)
 
 
+def splash(display):
+    """Drawn as soon as the OLED is open: at boot the rest of start-up takes a while on a Zero W."""
+    img = Image.new("1", (128, 64))
+    d = ImageDraw.Draw(img)
+    for y, text, f in ((16, "FM-1 Bridge", font(12, True)), (38, "Starting...", font(11))):
+        d.text(((128 - d.textlength(text, font=f)) / 2, y), text, font=f, fill=1)
+    display.show(img)
+
+
 def main():
     state = load_state()
     sim, test = "--sim" in sys.argv, "--test-screen" in sys.argv
-    midi = None
-    if not sim and not test:
-        # MIDI gets its own process, forked before any thread or hardware exists (App.run lowers
-        # the drawing thread's priority so the kernel runs MIDI and audio first)
-        import blemidi
-        midi = blemidi.MidiProcess(state["source_match"], state["midi_enabled"])
-        midi.start()
     if sim:
         display = SimDisplay(sys.argv[sys.argv.index("--sim") + 1])
     else:
@@ -923,6 +931,14 @@ def main():
         test_screen(display)
         time.sleep(15)
         return
+    splash(display)
+    midi = None
+    if not sim:
+        # MIDI gets its own process, forked before any thread exists (App.run lowers the drawing
+        # thread's priority so the kernel runs MIDI and audio first)
+        import blemidi
+        midi = blemidi.MidiProcess(state["source_match"], state["midi_enabled"])
+        midi.start()
     app = App(display, state)
     app.midi = midi
     if not sim:

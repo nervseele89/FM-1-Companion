@@ -14,6 +14,7 @@ from PIL import Image, ImageFont
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fm1-bt-bridge"))
 import bridge  # noqa: E402
+import meters  # noqa: E402
 
 ON, OFF, SCALE = (95, 205, 255), (6, 9, 14), 5      # the HAT's blue OLED, 5x
 
@@ -110,6 +111,56 @@ def main():
         app.render()
         oled(display.image).save(out / f"screen-{name}.png", optimize=True)
         print("wrote", out / f"screen-{name}.png")
+    meters_sheet(state, out)
+
+
+class Levels:
+    """meters.LevelReader stand-in: a bass note, a chord and some hiss, louder on the left"""
+
+    def __init__(self):
+        np = meters.numpy()
+        t = np.arange(1600) / meters.RATE
+        v = (0.35 * np.sin(2 * np.pi * 98 * t) + 0.15 * np.sin(2 * np.pi * 392 * t)
+             + 0.12 * np.sin(2 * np.pi * 494 * t) + 0.06 * np.sin(2 * np.pi * 2350 * t)
+             + 0.01 * np.random.default_rng(1).standard_normal(len(t)))
+        self.block = (np.stack([v, v * 0.7], axis=1) * 32767).astype(np.int16)
+        self.seq, self.target, self.proc = 1, None, None
+
+    def start(self, target):
+        self.target, self.proc = target, True
+
+    def running(self):
+        return True
+
+    def stop(self):
+        pass
+
+    def take(self):
+        return self.block, self.block
+
+
+def meters_sheet(state, out):
+    """The four meters side by side (2 x 2) as screen-meters.png."""
+    meters.load_numpy()
+    frames = []
+    for i in range(len(meters.METERS)):
+        display = Capture()
+        app = bridge.App(display, dict(state, meter=i))
+        app.loop, app.midi, app.wifi = Loop(), Midi(), False
+        app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
+        app.levels = Levels()
+        app.library_state = lambda now=None: None
+        app.open_meters()
+        for _ in range(4):                    # let the needles and peak holds settle
+            app.render(force=True)
+            time.sleep(0.1)
+        frames.append(oled(display.image))
+    w, h, gap = frames[0].width, frames[0].height, 12
+    sheet = Image.new("RGB", (2 * w + gap, 2 * h + gap), (30, 30, 30))
+    for i, frame in enumerate(frames):
+        sheet.paste(frame, ((i % 2) * (w + gap), (i // 2) * (h + gap)))
+    sheet.save(out / "screen-meters.png", optimize=True)
+    print("wrote", out / "screen-meters.png")
 
 
 if __name__ == "__main__":

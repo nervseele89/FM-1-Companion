@@ -58,7 +58,15 @@ The screen shows the bridge about 30–40 seconds after power-on.
 | **Joystick up/down** | Volume | Move | Move |
 | **Joystick press** | – | Pair the selected headphones | Change the setting |
 | **Joystick right** | Open settings | Pair | Change the setting |
-| **Joystick left** | – | Back | Back |
+| **Joystick left** | Open the meters | Back | Back |
+
+**Meters** (joystick left from the status screen): the FM-1's sound as **Bars** (peak level with peak
+hold), **VU** (two needles, 0 VU = −18 dBFS), **Spectrum** (16 bands, 50 Hz–7.5 kHz) or **Scope** (the
+waveform). Joystick up/down switches meter (the choice is remembered); right goes back. The screen
+stays on while sound plays. The first time after a boot it shows "Loading meters..." for about 8 s.
+They take about a quarter of the Zero W's CPU while shown, and nothing otherwise.
+
+![Meters](../docs/images/screen-meters.png)
 
 **The status screen:**
 
@@ -196,6 +204,13 @@ python3 ~/.local/share/fm1-bridge/library.py --help
 - **Audio and MIDI share one radio.** With Wi-Fi off it copes well. If the headphones drop out
   while MIDI is busy (dense clock plus notes), it's the radio sharing airtime.
 - The FM-1's USB rate (Sloop: GLO → SYSTEM → USB RATE) can be 44.1 or 48 kHz. Both work.
+- **Start-up takes about a minute** on a Zero W ("Starting..." shows first). Raspberry Pi OS Trixie
+  took nearly 3 minutes; the installer turns off cloud-init, keeps swap in RAM, and lets the bridge
+  start without waiting for the network. Wi-Fi comes up about 40 s after the bridge.
+  To save another ~60 s, move your Wi-Fi from Trixie's netplan profiles to a plain NetworkManager
+  profile (each netplan profile costs a ~20 s systemd reload at boot). Over SSH, with Wi-Fi on:
+  `sudo setsid -w sh config/fm1-native-wifi; sudo tail -n 1 /root/fm1-native-wifi.log`. The SSH session
+  may drop while Wi-Fi switches; if the new profile doesn't connect, the script switches back.
 
 ## Troubleshooting
 
@@ -271,6 +286,7 @@ Then pair again with KEY1.
 | `bridge.py` | `~/.local/share/fm1-bridge/` | The OLED app, headphone control and audio routing |
 | `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service and its link to the FM-1's USB MIDI |
 | `libui.py` | `~/.local/share/fm1-bridge/` | The Library screens on the box |
+| `meters.py` | `~/.local/share/fm1-bridge/` | The meter screen (bars, VU, spectrum, scope) |
 | `library.py` | `~/.local/share/fm1-bridge/` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
 | `sloop.py` | `~/.local/share/fm1-bridge/` | SLOOP's editor protocol: backups, projects, sample slots |
 | `web.py` | `~/.local/share/fm1-bridge/` | The web page |
@@ -278,6 +294,9 @@ Then pair again with KEY1.
 | `config/fm1-bridge.service` | `~/.config/systemd/user/` | Starts the app at boot |
 | `config/fm1-web.service` | `~/.config/systemd/user/` | Starts the web page at boot |
 | `config/fm1-sd-sync` | `/usr/local/sbin/` | Copies backups to the SD card (root helper, run through sudo) |
+| `config/systemd-user-sessions.service` | `/etc/systemd/system/` | Starts the user services without waiting for the network (faster boot) |
+| `config/rpi-swap-50-fm1-bridge.conf` | `/etc/rpi/swap.conf.d/50-fm1-bridge.conf` | Swap in RAM only (no swap file rebuilt at every boot) |
+| `config/fm1-native-wifi` | (run once by hand, see Good to know) | Moves Wi-Fi to a plain NetworkManager profile (faster boot) |
 | (library) | `~/fm1-library/` | Your backups, projects, samples and firmware |
 | `config/pipewire-10-fm1-bridge.conf` | `~/.config/pipewire/pipewire.conf.d/` | Larger buffers for the Zero W |
 | `config/wireplumber-51-fm1-bridge.conf` | `~/.config/wireplumber/wireplumber.conf.d/` | Headless Bluetooth, A2DP source only, PipeWire's own BLE MIDI off (WirePlumber 0.5) |
