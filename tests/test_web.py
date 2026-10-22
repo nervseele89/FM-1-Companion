@@ -97,10 +97,23 @@ def test_recordings():
     assert int(headers["Content-Length"]) == len(data)
     status, reply = jcall("/api/upload?folder=recordings&name=x.wav", raw=data)
     assert status == 400                                          # made on the box only
-    assert jcall("/api/ask", {"cmd": "load-recording", "file": rec["name"], "slot": 3})[1]["ok"]
-    request = library.take_request()
-    assert request["args"][:3] == ["load-recording", "3", "REC1015"] and request["title"] == "Load recording?"
-    assert jcall("/api/ask", {"cmd": "load-recording", "file": "../x.wav", "slot": 3})[0] == 400
+    # the sample editor: a real take, opened, edited and saved into the samples (no box confirmation)
+    from test_library import write_recording
+    take = write_recording(library.folder("recordings") / "2026-10-22_101600_fm1.wav", sound=2.0)
+    status, info = jcall("/api/edit-info?folder=recordings&file=" + take.name)
+    assert status == 200 and info["note"] == "A2" and info["name"] == "rec-101600" and 0 < info["level"] < 1, info
+    edit = {"folder": "recordings", "file": take.name, "start": 1.0, "end": 2.0, "fade_in": 0.01,
+            "fade_out": 0.05, "normalize": True, "reverse": True, "note": "A2", "name": "my bass"}
+    status, reply = jcall("/api/save-sample", edit)
+    assert status == 200 and reply["name"] == "my-bass_A2.wav", reply
+    assert (library.folder("samples") / "my-bass_A2.wav").is_file()
+    status, info = jcall("/api/edit-info?folder=samples&file=my-bass_A2.wav")
+    assert status == 200 and info["start"] == 0.0 and info["name"] == "my-bass", info
+    for bad in ({"start": 2.0, "end": 1.0}, {"note": "H2"}, {"file": "../x.wav"}, {"folder": "backups"},
+                {"start": "soon"}):
+        assert jcall("/api/save-sample", dict(edit, **bad))[0] == 400, bad
+    assert jcall("/api/edit-info?folder=backups&file=x.json")[0] == 404
+    assert jcall("/api/ask", {"cmd": "load-recording", "file": rec["name"], "slot": 3})[0] == 400   # gone
     assert jcall("/api/delete", {"folder": "recordings", "name": rec["name"]})[1]["ok"]
 
 

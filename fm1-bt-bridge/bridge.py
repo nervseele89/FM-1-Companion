@@ -31,6 +31,7 @@ from libui import LIBRARY_KEYS, LibraryScreens
 import meters
 from meters import MeterScreens
 from midiui import MidiScreens
+from sampleui import SampleEditor
 from weblink import WebLink
 
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
@@ -514,12 +515,13 @@ def short_label(label):
     return label
 
 
-class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
+class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
     fit = staticmethod(fit)
 
     def __init__(self, display, state):
         self.display, self.state = display, state
         self.library_init()
+        self.editor_init()
         self.meter_init()
         self.midi_init()
         self.web_init()
@@ -764,7 +766,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
                     ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
         return [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
-                ("recording", "Recordings", "›"), ("wifi", "Wi-Fi", wifi), ("g_sloop", "Sloop", "›"),
+                ("recording", "Recordings", "›"), ("editor", "Sample editor", "›"), ("wifi", "Wi-Fi", wifi),
+                ("g_sloop", "Sloop", "›"),
                 ("g_fm1", "FM-1", "›")]
 
     def change_setting(self):
@@ -887,7 +890,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             else:
                 self.say("Hold KEY3 to power off")
             return
-        if self.meter_key(key, held) or self.library_key(key, held) or self.midi_key(key, held):
+        if (self.meter_key(key, held) or self.library_key(key, held) or self.midi_key(key, held)
+                or self.editor_key(key, held)):
             return
         if self.screen == "status":
             if key == "key1":
@@ -961,7 +965,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4), self.clock_text(),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
                 tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting, self.settings_menu,
-                self.library_view(now), self.meter_view(now), self.midi_view())
+                self.library_view(now), self.meter_view(now), self.midi_view(),
+                self.editor_view() if self.screen == "editor" else None)
 
     def render(self, force=False):
         now = time.monotonic()
@@ -977,7 +982,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             {"scan": self.draw_scan, "settings": self.draw_settings,
              "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job,
              "meter": lambda d: None, "matrix": self.draw_matrix, "route": self.draw_route,
-             "player": self.draw_player,
+             "player": self.draw_player, "editor": self.draw_editor,
              "chanmap": self.draw_chanmap, "presets": self.draw_presets}.get(
                 self.screen, self.draw_status)(d)
             if self.screen == "status" and now < self.volume_shown and self.volume is not None:

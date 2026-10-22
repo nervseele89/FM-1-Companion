@@ -17,15 +17,18 @@ import os
 import shutil
 import sys
 import urllib.parse
+import wave
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import blemidi  # noqa: E402
 import library  # noqa: E402
+import sampler  # noqa: E402
 import sloop  # noqa: E402
 
 MAX_UPLOAD = 50 * 1024 * 1024
+EDITABLE = ("recordings", "samples")    # what the sample editor opens
 TARGETS = {"working": "the working project", "A": "project A", "B": "project B", "C": "project C",
            "D": "project D"}
 
@@ -159,6 +162,15 @@ class Handler(BaseHTTPRequestHandler):
             ctype = {"samples": "audio/wav", "recordings": "audio/wav",
                      "firmware": "application/octet-stream"}.get(folder, "application/json")
             self.send_file(path, ctype, inline=query.get("inline") == "1")
+        elif url.path == "/api/edit-info":            # what the sample editor opens a take or sample with
+            folder = query.get("folder", "")
+            path = safe_path(folder, query.get("file", "")) if folder in EDITABLE else None
+            if not path or not path.is_file():
+                return self.fail("no such file", 404)
+            try:
+                self.send(200, dict(sampler.info(path), level=library.sample_peak() / 32768))
+            except (OSError, ValueError, EOFError, wave.Error) as e:
+                self.fail(str(e))
         elif url.path == "/api/project":
             path = safe_path("backups", query.get("backup", ""))
             source = query.get("source", "")
@@ -201,6 +213,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"ok": not error, "message": error or "started"})
         if url.path == "/api/ask":
             return self.ask(request)
+        if url.path == "/api/save-sample":
+            return self.save_sample(request)
         if url.path == "/api/command":
             try:
                 command = check_command(request)
@@ -263,6 +277,26 @@ class Handler(BaseHTTPRequestHandler):
         tmp.replace(path)
         self.send(200, {"ok": True, "message": f"uploaded {path.name}"})
 
+    def save_sample(self, r):
+        """the sample editor's Save: a recording or a sample, edited, into the samples folder as a new file
+        (nothing on the FM-1 changes, so no confirmation on the box; Load sample does that)"""
+        folder = r.get("folder", "recordings")
+        path = safe_path(folder, r.get("file")) if folder in EDITABLE else None
+        if not path or not path.is_file():
+            return self.fail("no such file")
+        try:
+            start, end = float(r["start"]), float(r["end"])
+            if not 0 <= start < end:
+                raise ValueError("the start must come before the end")
+            fades = {k: min(2.0, max(0.0, float(r.get(k) or 0))) for k in ("fade_in", "fade_out")}
+            note = sampler.parse_note(r.get("note"))
+            name = str(r.get("name") or sampler.default_name(path))
+            out = sampler.save(path, name, note, start, end, normalize=bool(r.get("normalize", True)),
+                               reverse=bool(r.get("reverse")), **fades)
+        except (KeyError, TypeError, ValueError, OSError, EOFError, wave.Error) as e:
+            return self.fail(str(e)[:120] or "bad edit")
+        self.send(200, {"ok": True, "message": f"Saved {out.name} to the samples", "name": out.name})
+
     def ask(self, r):
         """a write to the FM-1: handed to the box, which asks for a hold-press there"""
         command = r.get("cmd")
@@ -288,13 +322,6 @@ class Handler(BaseHTTPRequestHandler):
             name = name or paths[0].stem[:8]
             library.ask_box(["load-sample", str(slot), name, *map(str, paths)], "Load sample?",
                             [f"{name} ({len(paths)} file{'s' if len(paths) > 1 else ''})", f"into USR{slot}"])
-        elif command == "load-recording":
-            path, slot = safe_path("recordings", r.get("file")), r.get("slot")
-            if not path or not path.is_file() or slot not in (1, 2, 3, 4):
-                return self.fail("pick a recording and a slot")
-            label = "REC" + (path.stem.split("_")[1][:4] if path.stem.count("_") >= 2 else "")
-            library.ask_box(["load-recording", str(slot), label, str(path)], "Load recording?",
-                            [f"{path.stem[:20]}: first 7 s", f"into USR{slot}"])
         elif command == "flash":
             path = safe_path("firmware", r.get("file"))
             if not path or not path.is_file():
@@ -358,6 +385,9 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
 #toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:9px 16px;border-radius:999px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;max-width:90%;text-align:center}
 #toast.shown{opacity:.94}
 .banner{border-radius:12px;padding:10px 12px;margin:0 0 12px;background:var(--soft)}
+#sed-wave{width:100%;height:150px;display:block;border-radius:10px;background:var(--soft);touch-action:none;cursor:ew-resize}
+.sedgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 10px;margin:10px 0}.sedgrid label{font-size:13px;color:var(--dim);display:flex;flex-direction:column;gap:3px}
+.sedgrid input,.sedgrid select{width:100%;box-sizing:border-box}.warn{color:var(--bad)}
 </style></head><body>
 <header><h1>FM-1 Bridge</h1><span id="recpill" class="pill rec" hidden>REC</span><span id="pill" class="pill">…</span></header>
 <main>
@@ -370,7 +400,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
   <div class="line"><span class="k">FM-1</span><span class="v" id="s-fm1">–</span></div>
   <div class="line"><span class="k">Speaker</span><span class="v" id="s-spk">–</span></div>
   <div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">Volume</span><b id="s-volv">–</b></div>
-    <input type="range" id="s-vol" min="0" max="100" step="5"></div>
+    <input type="range" id="s-vol" min="0" max="100" step="2"></div>
   <div class="line"><span class="k">Audio rate</span><div class="seg" id="s-rate"><button data-v="44100">44.1</button><button data-v="48000">48 kHz</button></div></div>
 </section>
 <section><h2>Clock</h2>
@@ -389,7 +419,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
 </section>
 <section><h2>Record</h2>
   <button class="recbtn" id="s-rec" onclick="toggleRec()">● Record</button>
-  <p class="dim small" style="margin:8px 0 0">Records the FM-1 on the box (48 kHz WAV). Takes are in the Recordings tab.</p>
+  <p class="dim small" style="margin:8px 0 0">Records the FM-1 on the box (a WAV at the FM-1's own rate). Takes are in the Recordings tab.</p>
 </section>
 </div>
 </div>
@@ -423,7 +453,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
 <input type="text" id="sname" placeholder="name (8 letters)" maxlength="8" size="12"><select id="sslot"><option value="1">USR1</option><option value="2">USR2</option><option value="3">USR3</option><option value="4">USR4</option></select>
 <button class="primary" onclick="loadSamples()">Load ticked into slot</button></div></section>
 
-<section><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's, based on Felucca. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
+<section><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".fwsc" onchange="upload('firmware',this)"><button onclick="this.previousElementSibling.click()">Upload a .fwsc…</button></label></div></section>
 <p class="meta">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. Restores, projects and firmware back the FM-1 up first; a sample only replaces its slot.</p>
 </div>
@@ -431,8 +461,31 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
 <!-- ======================= RECORDINGS ======================= -->
 <div class="tab" id="tab-recordings">
 <section><button class="recbtn" id="r-rec" onclick="toggleRec()">● Record</button></section>
-<section><h2>Takes</h2><p class="meta" style="margin:-4px 0 6px">Listen here, download, or <i>load into a slot</i>: its first 7 seconds of sound go into the FM-1, with the note it plays as the root.</p>
+<section><h2>Takes</h2><p class="meta" style="margin:-4px 0 6px">Listen here, download, or <i>edit as sample</i>: trim it, fade it, set its note, and save it to the samples.</p>
 <div id="recordings"></div></section>
+</div>
+
+<!-- ======================= SAMPLE EDITOR ======================= -->
+<div class="tab" id="tab-editor">
+<section><h2>Edit</h2><p class="meta" style="margin:-4px 0 8px">Make a sample from a recording, or edit one that's already in the samples. Saving always makes a new file.</p>
+  <div class="row"><select id="sed-pick" style="flex:1;min-width:0"></select><button class="primary" onclick="sedPicked()">Open</button></div></section>
+<section id="sed" hidden><h2>Sample editor <span class="dim small" id="sed-take"></span></h2>
+  <canvas id="sed-wave"></canvas>
+  <div class="row" style="margin-top:6px"><span class="small dim">Zoom</span><input type="range" id="sed-zoom" min="1" max="40" value="1" style="flex:1"></div>
+  <div class="sedgrid">
+    <label>Start (s)<input type="number" id="sed-start" step="0.01" min="0"></label>
+    <label>End (s)<input type="number" id="sed-end" step="0.01" min="0"></label>
+    <label>Fade in (ms)<input type="number" id="sed-fi" step="10" min="0" max="2000" value="0"></label>
+    <label>Fade out (ms)<input type="number" id="sed-fo" step="10" min="0" max="2000" value="10"></label>
+    <label>Root note<select id="sed-note"></select></label>
+    <label>Name<input type="text" id="sed-name" maxlength="24"></label>
+  </div>
+  <div class="row"><label class="row small"><input type="checkbox" id="sed-norm" checked style="width:20px;height:20px"> Normalize to the Sample level</label>
+    <label class="row small"><input type="checkbox" id="sed-rev" style="width:20px;height:20px"> Reverse</label></div>
+  <p class="small" id="sed-len" style="margin:8px 0"></p>
+  <div class="row"><button onclick="sedPlay()">▶ Play selection</button><button class="primary" onclick="sedSave()">Save to samples</button><button onclick="sedClose()">Close</button></div>
+  <p class="dim small" style="margin:8px 0 0">Drag on the waveform to move the nearer marker. Saved samples go to Library → Samples, ready to load into a slot (on the box: Sloop → Load sample).</p>
+</section>
 </div>
 </main>
 
@@ -440,6 +493,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
 <button data-tab="status"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>Status</button>
 <button data-tab="midi"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M8 5v8M12 5v8M16 5v8"/></svg>MIDI</button>
 <button data-tab="library"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h6v16H4zM14 4l6 2-4 14-6-2z"/></svg>Library</button>
+<button data-tab="editor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h2M7 8v8M11 5v14M15 9v6M19 11v2"/></svg>Editor</button>
 <button data-tab="recordings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg>Recordings</button>
 </nav>
 <div id="toast"></div>
@@ -470,7 +524,7 @@ function show(name) {
   tab = name; location.hash = name;
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("shown", t.id === "tab-" + name));
   document.querySelectorAll("nav button").forEach((b) => b.classList.toggle("shown", b.dataset.tab === name));
-  if (name === "library" || name === "recordings") refresh();
+  if (name === "library" || name === "recordings" || name === "editor") refresh();
   if (name === "midi") { renderMatrix(); renderEditor(); renderPresets(); }
   status();
 }
@@ -610,7 +664,7 @@ function renderLibrary() {
     ${p.folder === "backups" ? `<a href="/api/project?backup=${encodeURIComponent(p.file)}&source=${p.source}" download><button>Download</button></a>` : `<a href="/files/projects/${encodeURIComponent(p.file)}" download><button>Download</button></a><button class="danger" onclick="del('projects',${q(p.file)})">Delete</button>`}</div></div>`).join("")
     : `<p class="empty">No projects yet: make a backup, or upload a project file.</p>`;
   $("samples").innerHTML = lib.samples.length ? lib.samples.map((s) => `<div class="item"><label class="row"><input type="checkbox" class="pick" value="${esc(s.name)}" style="width:22px;height:22px"><span class="name">${esc(s.name)}</span></label>
-    <div class="row"><span class="meta">${(s.bytes / 1024).toFixed(0)} KB</span><button class="danger" onclick="del('samples',${q(s.name)})">Delete</button></div></div>`).join("")
+    <div class="row"><span class="meta">${(s.bytes / 1024).toFixed(0)} KB</span><button onclick="sedOpen('samples', ${q(s.name)})">Edit…</button><button class="danger" onclick="del('samples',${q(s.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No WAV files yet.</p>`;
   $("firmware").innerHTML = lib.firmware.length ? lib.firmware.map((f) => `<div class="item"><div><div class="name">${esc(f.name)}</div><div class="meta">${when(f.date)}</div></div>
     <div class="row"><button onclick="ask({cmd:'flash', file:${q(f.name)}})">Install…</button><button class="danger" onclick="del('firmware',${q(f.name)})">Delete</button></div></div>`).join("")
@@ -619,15 +673,116 @@ function renderLibrary() {
     <div class="meta">${mins(r.seconds)} · ${(r.bytes / 1048576).toFixed(1)} MB</div></div>
     <a href="/files/recordings/${encodeURIComponent(r.name)}" download><button>Download</button></a></div>
     <audio controls preload="none" src="/files/recordings/${encodeURIComponent(r.name)}?inline=1"></audio>
-    <div class="row" style="margin-top:6px"><select id="rs${i}">${[1,2,3,4].map((n) => `<option value="${n}">USR${n}</option>`).join("")}</select>
-    <button onclick="ask({cmd:'load-recording', file:${q(r.name)}, slot:+$('rs${i}').value})">Load into slot…</button>
+    <div class="row" style="margin-top:6px"><button onclick="sedOpen('recordings', ${q(r.name)})">Edit as sample…</button>
     <button class="danger" onclick="del('recordings',${q(r.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No recordings yet: press Record above, or on the box press on any meter screen.</p>`;
+  const pick = $("sed-pick"), was = pick.value;
+  pick.innerHTML = (lib.recordings.length ? `<optgroup label="Recordings">${lib.recordings.map((r) => `<option value="recordings/${esc(r.name)}">${when(r.date)} · ${mins(r.seconds)}</option>`).join("")}</optgroup>` : "")
+    + (lib.samples.length ? `<optgroup label="Samples">${lib.samples.map((x) => `<option value="samples/${esc(x.name)}">${esc(x.name)}</option>`).join("")}</optgroup>` : "")
+    || `<option value="">No recordings or samples yet</option>`;
+  if ([...pick.options].some((o) => o.value === was)) pick.value = was;
 }
 function loadSamples() {
   const files = [...document.querySelectorAll(".pick:checked")].map((c) => c.value);
   if (!files.length) return toast("Tick at least one WAV", false);
   ask({cmd:"load-sample", files, slot:+$("sslot").value, name:$("sname").value});
+}
+
+// ---------------------------------------------------------------- sample editor
+// The take is decoded here, so the waveform, zoom and preview run on the phone; Save sends the settings and
+// the box makes the file with the same sums the preview uses (sampler.py).
+let sed = null, actx = null, sedSrc = null;
+const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+const noteName = (n) => NOTE_NAMES[n % 12] + (Math.floor(n / 12) - 1);
+const num = (id) => parseFloat($(id).value) || 0;
+function sedPicked() { const v = $("sed-pick").value; if (v) sedOpen(v.slice(0, v.indexOf("/")), v.slice(v.indexOf("/") + 1)); }
+async function sedOpen(folder, file) {
+  if (tab !== "editor") show("editor");
+  $("sed").hidden = false; $("sed-take").textContent = "loading…"; $("sed").scrollIntoView({behavior:"smooth", block:"start"});
+  try {
+    actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+    const [info, data] = await Promise.all([fetch(`/api/edit-info?folder=${folder}&file=${encodeURIComponent(file)}`).then((r) => r.json()),
+                                            fetch(`/files/${folder}/${encodeURIComponent(file)}?inline=1`).then((r) => r.arrayBuffer())]);
+    if (info.ok === false) throw new Error(info.message);
+    const buf = await actx.decodeAudioData(data);
+    const mono = new Float32Array(buf.length);
+    for (let c = 0; c < buf.numberOfChannels; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) mono[i] += d[i] / buf.numberOfChannels; }
+    sed = {folder, file, info, rate: buf.sampleRate, mono, seconds: buf.length / buf.sampleRate, drag: null};
+  } catch (e) { toast("Can't open it: " + e.message, false); return sedClose(); }
+  const i = sed.info;
+  $("sed-take").textContent = i.name; $("sed-name").value = i.name;
+  $("sed-start").value = i.start; $("sed-end").value = i.end; $("sed-start").max = $("sed-end").max = sed.seconds;
+  $("sed-fi").value = 0; $("sed-fo").value = 10; $("sed-norm").checked = true; $("sed-rev").checked = false; $("sed-zoom").value = 1;
+  let opts = `<option value="">none (plays as C4)</option>`;
+  for (let n = 24; n <= 96; n++) opts += `<option value="${noteName(n)}">${noteName(n)}${noteName(n) === i.note ? " (found)" : ""}</option>`;
+  $("sed-note").innerHTML = opts; $("sed-note").value = i.note || "";
+  sedDraw();
+}
+function sedClose() { sedStop(); sed = null; $("sed").hidden = true; }
+function sedStop() { if (sedSrc) { try { sedSrc.stop(); } catch (e) {} sedSrc = null; } }
+function sedView() {                                // [from, to] seconds shown: the selection's middle, zoomed
+  if (sed.drag && sed.view) return sed.view;        // held still while a marker is dragged
+  const z = +$("sed-zoom").value, span = sed.seconds / z, mid = (num("sed-start") + num("sed-end")) / 2;
+  const from = Math.min(Math.max(0, mid - span / 2), sed.seconds - span);
+  return [from, from + span];
+}
+function sedDraw() {
+  if (!sed) return;
+  const cv = $("sed-wave"), dpr = window.devicePixelRatio || 1, w = cv.width = cv.clientWidth * dpr, h = cv.height = cv.clientHeight * dpr;
+  const g = cv.getContext("2d"), css = getComputedStyle(document.body);
+  const [from, to] = sedView(), x = (t) => (t - from) / (to - from) * w;
+  const s = num("sed-start"), e = num("sed-end"), fi = num("sed-fi") / 1000, fo = num("sed-fo") / 1000;
+  g.fillStyle = css.getPropertyValue("--accent"); g.globalAlpha = .16; g.fillRect(x(s), 0, x(e) - x(s), h); g.globalAlpha = 1;
+  const a0 = Math.floor(from * sed.rate), per = (to - from) * sed.rate / w;
+  let peak = 1e-9; for (let i = 0; i < sed.mono.length; i += 64) peak = Math.max(peak, Math.abs(sed.mono[i]));
+  g.strokeStyle = css.getPropertyValue("--ink"); g.lineWidth = Math.max(1, dpr * .8); g.beginPath();
+  for (let px = 0; px < w; px++) {
+    let lo = 0, hi = 0; const a = a0 + Math.floor(px * per), b = Math.min(sed.mono.length, a0 + Math.floor((px + 1) * per) + 1);
+    for (let i = a; i < b; i++) { const v = sed.mono[i]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    g.moveTo(px + .5, h / 2 - hi / peak * h * .46); g.lineTo(px + .5, h / 2 - lo / peak * h * .46 + 1);
+  }
+  g.stroke();
+  g.strokeStyle = css.getPropertyValue("--accent"); g.lineWidth = 2 * dpr; g.beginPath();   // the fades
+  g.moveTo(x(s), h); g.lineTo(x(s + fi), 4 * dpr); g.lineTo(x(e - fo), 4 * dpr); g.lineTo(x(e), h); g.stroke();
+  for (const t of [s, e]) { g.fillRect(x(t) - dpr, 0, 2 * dpr, h); }
+  const len = e - s, slot = sed.info.slot_seconds;
+  $("sed-len").innerHTML = `${len.toFixed(2)} s selected` + (len > slot ? ` <span class="warn">· longer than a SLOOP slot holds (${slot} s): it won't fit until it's trimmed</span>` : "");
+}
+function sedTime(ev) { const r = $("sed-wave").getBoundingClientRect(), [from, to] = sedView(); return from + (ev.clientX - r.left) / r.width * (to - from); }
+function sedSet(which, t) {
+  const s = num("sed-start"), e = num("sed-end");
+  t = Math.round(Math.min(sed.seconds, Math.max(0, t)) * 1000) / 1000;
+  if (which === "start") $("sed-start").value = Math.min(t, e - .02); else $("sed-end").value = Math.max(t, s + .02);
+  sedDraw();
+}
+$("sed-wave").addEventListener("pointerdown", (ev) => {
+  if (!sed) return;
+  const t = sedTime(ev); sed.drag = Math.abs(t - num("sed-start")) < Math.abs(t - num("sed-end")) ? "start" : "end";
+  sed.view = null; sed.view = sedView(); $("sed-wave").setPointerCapture(ev.pointerId); sedSet(sed.drag, t);
+});
+$("sed-wave").addEventListener("pointermove", (ev) => { if (sed && sed.drag) sedSet(sed.drag, sedTime(ev)); });
+$("sed-wave").addEventListener("pointerup", () => { if (sed) { sed.drag = sed.view = null; sedDraw(); } });
+for (const id of ["sed-start", "sed-end", "sed-fi", "sed-fo", "sed-zoom"]) $(id).addEventListener("input", sedDraw);
+window.addEventListener("resize", sedDraw);
+function sedPlay() {                                // the edit as it will be saved, played on this phone
+  if (!sed) return;
+  sedStop(); actx.resume();
+  const a = Math.floor(num("sed-start") * sed.rate), b = Math.min(sed.mono.length, Math.floor(num("sed-end") * sed.rate));
+  if (b - a < sed.rate * .02) return toast("The selection is too short", false);
+  const y = sed.mono.slice(a, b); if ($("sed-rev").checked) y.reverse();
+  const fi = Math.min(y.length, Math.floor(num("sed-fi") / 1000 * sed.rate)), fo = Math.min(y.length, Math.floor(num("sed-fo") / 1000 * sed.rate));
+  for (let i = 0; i < fi; i++) y[i] *= i / fi;
+  for (let i = 0; i < fo; i++) y[y.length - 1 - i] *= i / fo;
+  if ($("sed-norm").checked) { let p = 0; for (const v of y) p = Math.max(p, Math.abs(v)); if (p) { const k = sed.info.level / p; for (let i = 0; i < y.length; i++) y[i] *= k; } }
+  const buf = actx.createBuffer(1, y.length, sed.rate); buf.copyToChannel(y, 0);
+  sedSrc = actx.createBufferSource(); sedSrc.buffer = buf; sedSrc.connect(actx.destination); sedSrc.start();
+}
+async function sedSave() {
+  if (!sed) return;
+  const j = await post("/api/save-sample", {folder: sed.folder, file: sed.file, start: num("sed-start"), end: num("sed-end"),
+    fade_in: num("sed-fi") / 1000, fade_out: num("sed-fo") / 1000, normalize: $("sed-norm").checked,
+    reverse: $("sed-rev").checked, note: $("sed-note").value, name: $("sed-name").value});
+  if (j.ok) refresh();
 }
 
 // ---------------------------------------------------------------- polling

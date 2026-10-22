@@ -10,12 +10,12 @@ from datetime import datetime
 from pathlib import Path
 
 import library
-from meters import Player, clock
+from meters import Player, clock, wav_seconds
 
 SLOTS = ["USR1", "USR2", "USR3", "USR4"]
 TARGETS = [("working", "Working project"), ("A", "Project A"), ("B", "Project B"), ("C", "Project C"),
            ("D", "Project D")]
-WRITES = ("restore", "load-project", "load-sample", "load-recording", "flash")
+WRITES = ("restore", "load-project", "load-sample", "flash")
 AUTO_CHOICES = ["off", "boot", 2, 5, 10, 30]            # the "auto_backup" setting: minutes between backups
 AUTO_LABELS = {"off": "off", "boot": "at start"}
 
@@ -45,7 +45,7 @@ def short_firmware(text):
     return (text or "?").split()[-1]
 
 
-LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "firmware", "sd", "auto")
+LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "editor", "firmware", "sd", "auto")
 
 
 class LibraryScreens:
@@ -176,6 +176,9 @@ class LibraryScreens:
         elif key == "sample":
             items = [(Path(s["name"]).stem, "wav", s["name"]) for s in listing["samples"]]
             self.open_pick("Sample", items, self.pick_sample, "No WAV files yet")
+        elif key == "editor":
+            self.open_pick("Sample editor", [("From a recording ›", "", "recordings"),
+                                             ("From a sample ›", "", "samples")], self.pick_editor_source, "")
         elif key == "recording":
             items = [(short_date(r["name"]), clock(r.get("seconds", 0)), r["name"]) for r in listing["recordings"]]
             self.open_pick("Recordings", items, self.pick_recording, "No recordings yet")
@@ -244,9 +247,18 @@ class LibraryScreens:
                                                                      str(path)], "Load sample")),
                        "", back="pick")
 
+    def pick_editor_source(self, folder):
+        listing = library.listing()[folder]
+        if folder == "recordings":
+            items = [(short_date(r["name"]), clock(r.get("seconds", 0)), r["name"]) for r in listing]
+        else:
+            items = [(Path(s["name"]).stem, "wav", s["name"]) for s in listing]
+        self.open_pick("Edit which", items, lambda name: self.open_editor(name, folder),
+                       "No recordings yet" if folder == "recordings" else "No samples yet", back="pick")
+
     def pick_recording(self, name):
-        """what to do with a recording: play it on the speaker, resample it into a slot, or delete it"""
-        actions = [("Play", "", "play"), ("Load into slot ›", "", "load"), ("Delete", "", "delete")]
+        """what to do with a recording: play it on the speaker, make a sample of it, or delete it"""
+        actions = [("Play", "", "play"), ("Edit as sample ›", "", "edit"), ("Delete", "", "delete")]
         self.open_pick(short_date(name), actions, lambda action: self.recording_action(name, action), "")
 
     def recording_action(self, name, action):
@@ -258,27 +270,15 @@ class LibraryScreens:
                 self.player_name, self.screen = name, "player"
             else:
                 self.say("Can't play (pw-play?)")
-        elif action == "load":
-            self.pick_recording_slot(name)
+        elif action == "edit":
+            self.open_editor(name)
         elif action == "delete":
             def delete():
                 path.unlink(missing_ok=True)
                 self.screen = "settings"
                 self.say("Deleted")
-            seconds = max(0, path.stat().st_size - 44) // 192000 if path.exists() else 0
+            seconds = wav_seconds(path) if path.exists() else 0
             self.ask("Delete?", [short_date(name), f"{clock(seconds)} recorded"], delete)
-
-    def pick_recording_slot(self, name):
-        """a recording into a slot: trimmed to its first 7.3 s of sound, the note it plays as the root"""
-        path = library.folder("recordings") / name
-        items = [(slot, "", k + 1) for k, slot in enumerate(SLOTS)]
-        label = "REC" + (name.split("_")[1][:4] if name.count("_") >= 2 else "")
-        self.open_pick("Into slot", items,
-                       lambda slot: self.ask("Load recording?", [f"{short_date(name)}: first 7 s",
-                                                                 f"into USR{slot}: replaces it"],
-                                             lambda: self.start_job(["load-recording", str(slot), label,
-                                                                     str(path)], "Load recording")),
-                       "", back="pick")
 
     def pick_firmware(self, choice):
         if isinstance(choice, tuple):         # ("fetch", "sloop" / "clipper")

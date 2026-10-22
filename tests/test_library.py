@@ -206,27 +206,45 @@ def write_recording(path, before=1.0, sound=10.0, hz=110.0):
     return path
 
 
-def test_resample_a_recording():
+def test_sample_editor():
+    """A recording, edited, saved to the samples; a sample edited again; then loaded into a slot."""
+    import numpy as np
+    import sampler
     rec = write_recording(library.folder("recordings") / "2026-10-22_001217_fm1.wav")
-    out = library.sample_from_recording(rec)
-    assert out.parent.name == "samples" and out.name == "rec-001217_A2.wav", out.name   # 110 Hz: A2
-    with wave.open(str(out)) as w:
-        assert w.getframerate() == 22050 and w.getnchannels() == 1
-        seconds = w.getnframes() / 22050
-        first = struct.unpack("<200h", w.readframes(200))
-    assert 7.2 < seconds <= library.SLOT_SECONDS + 0.01, seconds                  # cut to fit a slot
-    assert max(abs(v) for v in first) > 1000                                    # starts at the sound
-    silent = library.folder("recordings") / "2026-10-22_000000_fm1.wav"
-    write_recording(silent, sound=0.0)
+    info = sampler.info(rec)                               # opens on the sound, a slot long, its note found
+    assert info["name"] == "rec-001217" and info["note"] == "A2" and info["rate"] == 48000, info  # 110 Hz: A2
+    assert 0.98 < info["start"] < 1.0 and abs(info["end"] - info["start"] - library.SLOT_SECONDS) < 0.01, info
+    out = sampler.save(rec, info["name"], sampler.parse_note(info["note"]), 1.0, 3.0,
+                       fade_in=0.1, fade_out=0.2, normalize=True, reverse=False)
+    assert out.parent.name == "samples" and out.name == "rec-001217_A2.wav", out.name
+    rate, y = sampler.load(out)
+    assert rate == 48000 and abs(len(y) - 2 * 48000) <= 1                 # mono, the take's rate, 2 s
+    assert abs(y[0]) < 50 and abs(y[-1]) < 50                            # faded in and out
+    assert abs(np.abs(y).max() - library.sample_peak()) <= 1             # normalized to the Sample level
+    rate, x = sampler.load(rec)
+    back = sampler.render(x, rate, 1.0, 3.0, fade_in=0, fade_out=0, normalize=False, reverse=True)
+    assert np.array_equal(back[::-1], np.clip(np.round(x[48000:144000]), -32768, 32767).astype("<i2"))
+    # a sample opens whole, with the note in its name; saving it again makes a new file
+    info = sampler.info(out)
+    assert info["name"] == "rec-001217" and info["note"] == "A2" and (info["start"], info["end"]) == (0.0, 2.0), info
+    again = sampler.save(out, "rec-001217", 45, 0.0, 1.0)
+    assert again.name == "rec-001217-2_A2.wav" and out.exists()
+    assert sampler.file_name("pad A3 soft", 60) == "pad-soft_C4.wav"     # no second note to confuse SLOOP
+    for bad in ("H2", "C9"):
+        try:
+            sampler.parse_note(bad)
+            raise AssertionError(f"{bad} was accepted")
+        except ValueError:
+            pass
     try:
-        library.sample_from_recording(silent)
-        raise AssertionError("a silent recording was accepted")
-    except sloop.SloopError as e:
-        assert "silence" in str(e)
-    # the whole job, into USR2 of the pretend FM-1
+        sampler.save(rec, "x", None, 2.0, 2.005)
+        raise AssertionError("a selection that short was accepted")
+    except ValueError:
+        pass
+    # Sloop > Load sample takes it from the samples, into USR2 of the pretend FM-1
     fake = fake_fm1.FakeFM1()
     use(fake)
-    library.job_load_sample(2, "REC0012", [], recording=str(rec))
+    library.job_load_sample(2, "REC0012", [str(out)])
     assert library.read_state()["state"] == "done", library.read_state()
     assert fake.objects[33][8:15] == b"REC0012"
 

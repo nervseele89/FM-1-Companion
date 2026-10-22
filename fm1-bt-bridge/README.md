@@ -116,7 +116,8 @@ or down repeats, faster after a second and a half.
 | · **Pairing** | Opens a 2-minute window in which a device can pair with the bridge. Only needed on systems that want to pair first (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
-| **Recordings ›** | Takes recorded on the box: play one, resample it into a slot, or delete it (see Recording). |
+| **Recordings ›** | Takes recorded on the box: play one, edit it into a sample, or delete it (see Recording). |
+| **Sample editor ›** | Make a sample from a recording, or edit one already in the samples (see Sample editor). |
 | **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
 | **Sloop ›** | Backups, projects, samples and the sample level: SLOOP 2.3+ (below). |
 | **FM-1 ›** | What the FM-1 runs, and installing firmware (below). |
@@ -151,8 +152,8 @@ Then MIDI flows both ways:
 ### Recording
 
 On any meter screen, press the joystick to start recording the FM-1, and again to stop. The file is a
-48 kHz, 16-bit stereo WAV (about 11 MB a minute) in `~/fm1-library/recordings/`, named by date and time;
-PipeWire writes it, so it costs almost no CPU.
+16-bit stereo WAV at the FM-1's own rate (44.1 or 48 kHz, about 10 MB a minute) in
+`~/fm1-library/recordings/`, named by date and time; PipeWire writes it, so it costs almost no CPU.
 
 ![Recording](../docs/images/screen-status-rec.png)
 
@@ -162,14 +163,39 @@ PipeWire writes it, so it costs almost no CPU.
   Shutting down with KEY3 finishes the file first.
 - **The Tape meter** turns its reels while sound plays; while recording, the tape winds from the left reel
   to the right one, a full reel every 30 minutes.
-- **On the box:** Library → **Recordings ›** lists the takes. Pick one, then:
+- **On the box:** Settings → **Recordings ›** lists the takes. Pick one, then:
   - **Play:** on the speaker, over the FM-1's live sound, with the time and a progress bar. Press stops it.
-  - **Load into slot ›:** resamples the take into a sample slot (USR1–4): its first 7.3 s of sound (what a
-    slot holds), trimmed and faded, with the note it plays detected and set as the root, so the sample plays
-    in tune across the keyboard. A copy goes into the samples folder (`rec-HHMMSS_A3.wav`).
+  - **Edit as sample ›:** opens it in the sample editor (below).
   - **Delete** (hold to confirm).
-- **To get the files:** with Wi-Fi on, the web page's *Recordings* section has Download, Load into slot
-  and Delete; over SSH they're in `~/fm1-library/recordings/`.
+- **To get the files:** with Wi-Fi on, the web page's *Recordings* tab has Download, Edit as sample and
+  Delete; over SSH they're in `~/fm1-library/recordings/`.
+
+### Sample editor
+
+Turns a recording into a sample, or edits a sample that's already in the samples folder. Nothing goes onto
+the FM-1 here: the edit is saved as a **new WAV in the samples folder** (the original is never
+overwritten), and from there **Sloop → Load sample** puts it in a slot like any other sample.
+
+**On the box:** Settings → **Sample editor ›** → *From a recording* or *From a sample* (or Recordings → a
+take → *Edit as sample*). The screen shows the waveform with the selection between two markers.
+
+| Key | What it does |
+|---|---|
+| **Left / right** | Step through the fields: Start, End, Fade in, Fade out, Normalize, Reverse, Note, Save. Left from Start goes back. |
+| **Up / down** | Change the field shown at the top (held, it speeds up). |
+| **Press** | Play the selection on the speaker, as it will be saved. On **Save**: save it. |
+
+- A recording opens on its **sound** (silence trimmed), at most 7.3 s long, which is what a SLOOP slot
+  holds; a sample opens **whole**. The length shows top right, inverted if it's longer than a slot.
+- **Fade in / out** in 10 ms steps; **Normalize** sets the peak to the Sample level (Sloop › Sample level);
+  **Reverse** flips it.
+- **Note:** the root note, found by listening to the selection (a sample's comes from its name). It goes
+  into the file name, `rec-101544_A2.wav`, which is where SLOOP reads it, so the sample plays in tune across
+  the keyboard.
+
+**On the web page:** the **Editor** tab (or *Edit as sample* on a take, *Edit* on a sample): drag on the
+waveform to move the nearer marker, zoom in, set the fades, note and a **name**, *Play selection* on your
+phone, then *Save to samples*.
 
 ### MIDI clock
 

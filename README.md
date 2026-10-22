@@ -18,8 +18,9 @@ own screen and joystick or from your phone.
 - **Wireless audio and MIDI:** the FM-1 plays on Bluetooth headphones or a speaker, and the box shows up
   as a Bluetooth MIDI device, **"FM-1 Bridge"**, so a keyboard, iPad, phone or computer can play the FM-1
   and hear back what it sends.
-- **A recorder:** record the FM-1 to WAV from the box, play takes back on the speaker, or turn one into a
-  sample on the FM-1 (trimmed, and tuned to the note it plays).
+- **A recorder and a sample editor:** record the FM-1 to WAV from the box, play takes back on the speaker,
+  and edit a take (or any sample) into a new sample: trim it, fade it, normalize or reverse it, and tune it
+  to the note it plays, ready to load into the FM-1.
 - **Playing tools:** a MIDI clock (follow your keyboard's clock, or be the master with tap tempo and
   Start/Stop), a metronome, an arpeggiator and chord memory.
 - **A MIDI matrix:** route the keyboard, the FM-1 and the box to each other; transpose, re-channel,
@@ -31,7 +32,8 @@ own screen and joystick or from your phone.
   and, if you want it, isod89's experimental synthesizer firmware [Clipper](https://github.com/isod89/clipper-fm1).
   Backups are SLOOP's own backup files, so they also open in SLOOP's web editor.
 - **A web app on your phone** (`http://fm1bridge.local`, Wi-Fi on): live status, volume and the playing
-  settings, the MIDI matrix, recordings you can play in the browser, and uploads and downloads for the library.
+  settings, the MIDI matrix, a sample editor with a waveform you drag, recordings you can play in the browser,
+  and uploads and downloads for the library.
 - **Its own screen and controls:** status, meters and a short settings menu in sections, on the HAT's OLED,
   keys and joystick. Ready about a minute after power-on.
 - **Coming in v3:** 5-pin DIN MIDI In, Out and Thru.
@@ -41,7 +43,7 @@ own screen and joystick or from your phone.
                             ├◀── Bluetooth MIDI ──▶ keyboard / iPad / phone / Mac
 FM-1 ◀── USB ──▶ Pi Zero W ─┤
  (audio, MIDI, backups,     ├◀── Wi-Fi ───────────▶ web app on your phone
-  samples, firmware)        └── OLED + joystick: meters, recorder, settings
+  samples, firmware)        └── OLED + joystick: meters, recorder, sample editor
 ```
 
 Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 and 2.8 on the FM-1, a JBL Go 3
@@ -50,30 +52,30 @@ the real FM-1 with a backup, a restore (read back byte for byte), a project load
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
-## What's new in v2.4
+## What's new in v2.5
 
-![Settings, in sections](docs/images/screen-settings.png)
+![The sample editor](docs/images/screen-editor.png)
 
 **New**
-- **Settings in sections:** a short top list (**Playing**, **Audio**, **MIDI**, **Recordings**, **Wi-Fi**,
-  **Sloop**, **FM-1**) instead of one long scroll. Playing, Audio and MIDI work whatever you plug in;
-  **Sloop ›** holds what needs SLOOP (backups, restores, projects, samples, the sample level, auto backup,
-  the SD card) and **FM-1 ›** what needs the FM-1 itself (what it runs, installing firmware).
-- **The web app does more** (on your phone at `http://fm1bridge.local`): live status, volume and the
-  playing settings, Start/Stop and recording, the MIDI matrix with named presets, and recordings that play
-  in the browser. Anything that writes to the FM-1 still waits for a hold-press on the box.
-- **Sample level** (Sloop ›): **-6 dB** (the default), **-3 dB** or **full**. Loaded samples used to be
-  normalized to full scale and clipped in the mix.
-- **A big volume bar** on the home screen while you change the volume, which now moves in even **2%** steps.
-- **Holding up or down speeds up** after a second and a half (volume, lists, tempo).
-- **The home screen names things properly:** IN shows what the FM-1 runs (**SLOOP 2.8**, not its USB name), remembered across restarts, and MIDI shows the keyboard's name instead of its Bluetooth address.
-- **A demo video** at the top of this page.
+- **A sample editor**, on the box (Settings → **Sample editor ›**) and in the web app (a new **Editor** tab).
+  Start from a recording or from a sample already in the samples folder, then set the **start and end**
+  on the waveform, **fade in and out**, **normalize** to the Sample level, **reverse**, and pick the
+  **root note** (found for you by listening to it). Play the selection to hear it exactly as it will be
+  saved. On the phone you can drag the markers, zoom in and name the file.
+- **Saved as a new sample, never over the original:** the edit goes into the samples folder with its note
+  in the name (`my-bass_A2.wav`), so SLOOP plays it in tune. From there **Sloop › Load sample** puts it in
+  a slot like any other sample.
+- **Recordings stay recordings:** a take now offers *Play*, *Edit as sample* and *Delete*. The old one-step
+  "load the first 7 seconds into a slot" is gone, so nothing reaches the FM-1 that you haven't trimmed and
+  heard first.
 
-**Fixed and faster**
-- **Recordings keep all their audio:** the recorder ran at 48 kHz while the FM-1 runs at 44.1 kHz, and on a
-  busy Pi it dropped blocks (a 96 s take came out 79 s long). It now records at the FM-1's own rate.
-- **Sample loads take about half as long** to convert (same bytes as SLOOP's own converter), and no longer
-  make a backup first: a sample only replaces its own slot.
+<details><summary>Earlier: v2.4</summary>
+
+Settings in sections (Playing, Audio, MIDI, Recordings, Wi-Fi, Sloop, FM-1), a bigger web app (live status
+and controls, the MIDI matrix with named presets, recordings in the browser), the Sample level setting, a
+big volume bar with 2% steps, faster hold-repeat, the home screen naming the firmware (SLOOP 2.8) and the
+keyboard, recordings that keep all their audio, and sample loads that convert in about half the time.
+</details>
 
 <details><summary>Earlier: v2.3</summary>
 
@@ -98,7 +100,7 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 | ![Status screen](docs/images/screen-status.png) | ![Recording](docs/images/screen-status-rec.png) |
 | **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume and the clock. LIVE means audio is flowing. | **Recording:** REC and the time in place of LIVE. |
 | ![Settings](docs/images/screen-settings.png) | ![Playing](docs/images/screen-settings-play.png) |
-| **Settings** (joystick right): Playing, Audio, MIDI, Recordings, Wi-Fi, Sloop and FM-1. Press opens a section, left goes back. | **Playing ›:** Metronome, Tempo, Clock, Arp, Chord and the click level. **Audio ›** has the speaker and the audio rate; **MIDI ›** Bluetooth MIDI, pairing, the routes and their presets. |
+| **Settings** (joystick right): Playing, Audio, MIDI, Recordings, Sample editor, Wi-Fi, Sloop and FM-1. Press opens a section, left goes back. | **Playing ›:** Metronome, Tempo, Clock, Arp, Chord and the click level. **Audio ›** has the speaker and the audio rate; **MIDI ›** Bluetooth MIDI, pairing, the routes and their presets. |
 | ![Sloop](docs/images/screen-settings-sloop.png) | ![FM-1](docs/images/screen-settings-fm1.png) |
 | **Sloop ›:** back up, restore, load a project or a sample, the sample level, auto backup, the SD card. Writes ask you to hold the joystick press for 2 seconds; restores and project loads back up first. | **FM-1 ›:** what the FM-1 runs, and installing firmware (SLOOP and Clipper download from GitHub with Wi-Fi on). |
 | ![MIDI routes](docs/images/screen-matrix.png) | ![A route](docs/images/screen-route.png) |
@@ -106,7 +108,9 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 | ![Volume](docs/images/screen-status-volume.png) | ![Firmware install](docs/images/screen-job.png) |
 | **Volume:** up/down on the home screen, in 2% steps, shown big for a moment. | **A job running:** here a SLOOP update, about 2 minutes. |
 | ![A recording](docs/images/screen-recordings.png) | ![Playing](docs/images/screen-player.png) |
-| **A recording:** play it, load it into a sample slot, or delete it. | **Playing** a take on the speaker. |
+| **A recording:** play it, edit it as a sample, or delete it. | **Playing** a take on the speaker. |
+| ![Sample editor](docs/images/screen-editor.png) | ![The note](docs/images/screen-editor-note.png) |
+| **Sample editor:** the selection between two markers (outside it, dotted); left/right picks the field, up/down changes it, press plays it. The length is top right. | **Note:** the root note it found by listening (up/down changes it). It goes into the saved file's name so SLOOP plays the sample in tune. |
 | ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |
 | **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. | **Pairing**, then it's remembered and reconnects by itself. |
 | ![Screensaver](docs/images/screen-screensaver.png) | ![Starting](docs/images/screen-starting.png) |
@@ -155,10 +159,14 @@ sudo reboot
 | `fm1-bt-bridge/libui.py` | The Sloop and FM-1 settings, recordings and their screens on the box |
 | `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
 | `fm1-bt-bridge/midiui.py` | The MIDI matrix screens on the box |
+| `fm1-bt-bridge/sampleui.py` | The sample editor's screen on the box |
+| `fm1-bt-bridge/sampler.py` | The sample editor's sums (trim, fades, normalize, reverse, the note), shared by the box and the web page |
 | `fm1-bt-bridge/metronome.py` | The metronome's click stream (run by the MIDI process) |
 | `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
 | `fm1-bt-bridge/sloop.py` | SLOOP's editor protocol over USB MIDI: backups, projects, sample slots |
-| `fm1-bt-bridge/web.py` | The library's web page (http://fm1bridge.local while Wi-Fi is on) |
+| `fm1-bt-bridge/samplefast.py` | SLOOP's sample converter made faster, with the same output byte for byte |
+| `fm1-bt-bridge/web.py` | The web app (http://fm1bridge.local while Wi-Fi is on) |
+| `fm1-bt-bridge/weblink.py` | How the box and the web app talk: the box's status out, the page's commands in |
 | `fm1-bt-bridge/vendor/sloop/` | SLOOP's firmware installer and sample converter, copied unchanged (GPL-3.0, credited in `VENDORED.md`) |
 | `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot services on the Pi |
 | `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd, swap, Wi-Fi and SD-card helper configuration |

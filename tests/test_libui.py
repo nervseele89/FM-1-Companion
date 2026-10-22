@@ -128,8 +128,8 @@ def test_flows():
     app = make_app()
     keys(app, "right")
     top = [r[0] for r in app.settings_rows()]
-    assert app.screen == "settings" and top == ["g_play", "g_audio", "g_midi", "recording", "wifi", "g_sloop",
-                                                "g_fm1"]
+    assert app.screen == "settings" and top == ["g_play", "g_audio", "g_midi", "recording", "editor", "wifi",
+                                                "g_sloop", "g_fm1"]
     keys(app, "press")                                     # Playing ›
     assert app.settings_menu == "play" and [r[0] for r in app.settings_rows()] == [
         "metronome", "tempo", "clock", "arp_on", "chord_on", "click"]
@@ -391,7 +391,7 @@ def test_recordings():
     assert app.screen == "pick" and app.pick["title"] == "Recordings" and app.pick["items"][0][:2] == ("10-22 00:12", "0:05")
     snap(app, "recordings-pick")
     keys(app, "press")                                     # its actions
-    assert [i[2] for i in app.pick["items"]] == ["play", "load", "delete"]
+    assert [i[2] for i in app.pick["items"]] == ["play", "edit", "delete"]
     snap(app, "recording-actions")
     fake = FakePwPlay()
     meters.subprocess.Popen = fake
@@ -414,19 +414,65 @@ def test_recordings():
     app.sink = None                                        # no speaker: says so
     app.recording_action(rec.name, "play")
     assert app.screen != "player" and "speaker" in app.message
-    # Load into slot: USR2
-    app.recording_action(rec.name, "load")
-    keys(app, "down", "press")
-    assert app.screen == "confirm"
-    snap(app, "recording-confirm")
-    keys(app, "press!")
-    assert app.started[-1] == ["load-recording", "2", "REC0012", str(rec)], app.started[-1]
     # Delete, after a hold
     app.recording_action(rec.name, "delete")
     keys(app, "press")
     assert rec.exists()                                    # a short press doesn't delete
     keys(app, "press!")
     assert not rec.exists() and app.screen == "settings"
+
+
+def test_sample_editor():
+    """Settings > Sample editor: a recording or a sample; markers, fades, note, Save into the samples."""
+    from test_library import write_recording
+    app = make_app()
+    for f in library.folder("samples").glob("*"):
+        f.unlink()
+    rec = write_recording(library.folder("recordings") / "2026-10-22_001217_fm1.wav")
+    at_row(app, None, "editor")
+    keys(app, "press")
+    assert app.screen == "pick" and [i[2] for i in app.pick["items"]] == ["recordings", "samples"]
+    keys(app, "down", "press")                             # From a sample: none yet
+    assert "No samples" in app.message
+    keys(app, "up", "press", "press")                      # From a recording: the take
+    assert app.screen == "editor"
+    for _ in range(200):                                   # it loads in the background
+        if not app.ed["loading"]:
+            break
+        time.sleep(0.05)
+    ed = app.ed
+    assert not ed["error"] and ed["note"] == 45 and 0.98 < ed["start"] < 1.0, ed["error"]
+    snap(app, "editor")
+    start = ed["start"]
+    keys(app, "up", "up")                                  # Start later
+    assert ed["start"] > start
+    keys(app, "right", "down")                             # End earlier
+    keys(app, "right", "up", "up")                         # Fade in: 20 ms
+    assert ed["fade_in"] == 0.02
+    keys(app, "right", "right", "right", "up")            # Reverse on
+    assert ed["reverse"] and FIELD(app) == "reverse"
+    keys(app, "right", "up")                               # Note: A2 -> A#2
+    assert ed["note"] == 46
+    snap(app, "editor-note")
+    keys(app, "right", "press")                            # Save
+    saved = list(library.folder("samples").glob("*.wav"))
+    assert [p.name for p in saved] == ["rec-001217_A#2.wav"] and "Saved" in app.message, saved
+    keys(app, *["left"] * 8)                               # back out, field by field, to the list
+    assert app.screen == "pick" and app.ed is None
+    app.pick = None                                        # the sample opens whole, its note from the name
+    app.open_editor(saved[0].name, "samples")
+    for _ in range(200):
+        if not app.ed["loading"]:
+            break
+        time.sleep(0.05)
+    assert app.ed["start"] == 0.0 and app.ed["note"] == 46 and app.ed["out_name"] == "rec-001217"
+    keys(app, "left")
+    assert app.screen == "settings"
+
+
+def FIELD(app):
+    import sampleui
+    return sampleui.FIELDS[app.ed["field"]][0]
 
 
 def test_midi_matrix():

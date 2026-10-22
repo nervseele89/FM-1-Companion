@@ -136,6 +136,17 @@ def scenes(app):
     def player():
         app.player, app.player_name, app.screen = Playing(), "2026-10-22_081530_fm1.wav", "player"
 
+    def editor(field="start"):
+        import sampleui
+        app.ed = {"name": TAKE.name, "path": TAKE, "field": 0, "loading": True, "error": None}
+        app.screen = "editor"
+        app.editor_load(app.ed)               # here and now, not in the background
+        app.ed["field"] = [f for f, _ in sampleui.FIELDS].index(field)
+        app.ed["fade_out"] = 0.25
+
+    def editor_note():
+        editor("note")
+
     def job():
         app.screen, app.job_title = "job", "Firmware"
         state = {"job": "flash", "state": "running", "step": "Writing", "percent": 64}
@@ -156,7 +167,26 @@ def scenes(app):
             ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("status-volume", volume),
             ("matrix", matrix), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings),
+            ("editor", editor), ("editor-note", editor_note),
             ("player", player), ("job", job)]
+
+
+def write_take(path):
+    """a recording to edit: a breath of silence, four plucked notes dying away, silence"""
+    import wave
+    np = meters.numpy() or __import__("numpy")
+    rate, out = 44100, [np.zeros(int(44100 * 0.7))]
+    for hz in (110.0, 146.8, 130.8, 98.0):
+        t = np.arange(int(rate * 0.9)) / rate
+        out.append(sum(np.sin(2 * np.pi * hz * k * t) / k for k in range(1, 5)) * np.exp(-t * 4.5) * 14000)
+    out.append(np.zeros(int(rate * 1.2)))
+    x = np.concatenate(out).astype("<i2")
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(np.repeat(x, 2).tobytes())
+    return path
 
 
 def main():
@@ -170,6 +200,10 @@ def main():
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
     state = dict(bridge.DEFAULTS, last_name="JBL Go 3", last_mac="00:00:00:00:00:00", clock_mode="box")
+    global TAKE
+    import library as lib
+    meters.load_numpy()
+    TAKE = write_take(lib.folder("recordings") / "2026-10-22_101544_fm1.wav")
     for name, setup in scenes(bridge.App(Capture(), state)):
         display = Capture()
         app = bridge.App(display, dict(state))
