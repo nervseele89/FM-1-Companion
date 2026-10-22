@@ -222,7 +222,7 @@ class LibraryScreens:
         items = [(slot, "", k + 1) for k, slot in enumerate(SLOTS)]
         self.open_pick("Into slot", items,
                        lambda slot: self.ask("Load sample?", [Path(name).stem[:20], f"into USR{slot}",
-                                                              "(backed up first)"],
+                                                              "replaces what's there"],
                                              lambda: self.start_job(["load-sample", str(slot), Path(name).stem[:8],
                                                                      str(path)], "Load sample")),
                        "", back="pick")
@@ -258,7 +258,7 @@ class LibraryScreens:
         label = "REC" + (name.split("_")[1][:4] if name.count("_") >= 2 else "")
         self.open_pick("Into slot", items,
                        lambda slot: self.ask("Load recording?", [f"{short_date(name)}: first 7 s",
-                                                                 f"into USR{slot} (backed up first)"],
+                                                                 f"into USR{slot}: replaces it"],
                                              lambda: self.start_job(["load-recording", str(slot), label,
                                                                      str(path)], "Load recording")),
                        "", back="pick")

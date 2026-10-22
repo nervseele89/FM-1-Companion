@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT / "fm1-bt-bridge"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 TMP = Path(tempfile.mkdtemp(prefix="fm1-test-"))
 os.environ.update(FM1_LIBRARY=str(TMP / "library"), XDG_RUNTIME_DIR=str(TMP / "run"), FM1_SD_LIBRARY=str(TMP / "sd"))
+os.environ["FM1_SETTINGS"] = str(TMP / "settings.json")          # never this computer's own box settings
 
 import fake_fm1  # noqa: E402
 import library  # noqa: E402
@@ -213,6 +214,44 @@ def test_resample_a_recording():
     library.job_load_sample(2, "REC0012", [], recording=str(rec))
     assert library.read_state()["state"] == "done", library.read_state()
     assert fake.objects[33][8:15] == b"REC0012"
+
+
+def test_fast_conversion_and_sample_level():
+    import sampleio as sio
+    import samplefast as fast
+    for wav in (write_wav(TMP / "c1.wav", 0.4, 220), write_wav(TMP / "c2.wav", 0.4, 1760)):
+        rate, x = sio.read_any_wav(wav)
+        assert fast.read_any_wav(wav) == (rate, x)                       # the same floats as SLOOP's code
+        y = sio.resample(x, rate, sio.SLOT_RATE)
+        assert fast.resample(x, rate, sio.SLOT_RATE) == y
+        ints = sio.to_int16(y)
+        assert fast.to_int16(y) == ints and max(map(abs, fast.to_int16(y, 16422))) == 16422
+        assert fast.ima_encode(ints, 0) == sio.ima_encode(ints, 0)       # the same bytes, faster
+        assert sloop.build_slot("x", [wav]) == sio.user_slot("x", [(ints, sio.note_from_name(wav.stem), None, None)])
+    settings = TMP / "settings.json"
+    settings.unlink(missing_ok=True)
+    assert library.sample_peak() == 16422                                # -6 dB unless set
+    settings.write_text(json.dumps({"sample_level": "full"}))
+    assert library.sample_peak() == 30000
+    settings.write_text(json.dumps({"sample_level": "-3 dB"}))
+    assert library.sample_peak() == 23197
+    settings.unlink()
+    # a load at -6 dB: quieter than SLOOP's own 30000, converted while the backup ran
+    fake = fake_fm1.FakeFM1()
+    use(fake)
+    backups = len(list(library.folder("backups").glob("*.json")))
+    library.job_load_sample(3, "quiet", [write_wav(TMP / "q.wav", 0.2)])
+    assert library.read_state()["state"] == "done"
+    assert len(list(library.folder("backups").glob("*.json"))) == backups      # no backup for a sample
+    loud = sloop.build_slot("quiet", [TMP / "q.wav"], 30000)[1]
+    assert fake.objects[34][8:13] == b"QUIET" and loud not in fake.objects[34]
+    bad = TMP / "bad.wav"
+    bad.write_bytes(b"RIFF....not audio")
+    try:
+        library.job_load_sample(3, "bad", [bad])
+        raise AssertionError("a bad WAV was loaded")
+    except Exception as e:
+        assert library.read_state()["state"] == "error" and fake.objects[34][8:13] == b"QUIET", e
 
 
 def test_timed_backups_skip_unchanged():

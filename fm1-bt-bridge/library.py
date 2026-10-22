@@ -9,10 +9,10 @@
   library.py save-project FILE SRC NAME
                                       a backup's project as its own file in ~/fm1-library/projects
   library.py load-sample SLOT NAME WAV...
-                                      WAV files into USR SLOT (1-4), one zone each (backs up first)
+                                      WAV files into USR SLOT (1-4), one zone each
   library.py load-recording SLOT NAME FILE
                                       a recording into USR SLOT: trimmed to its first 7.3 s of sound, its note
-                                      detected for the root, kept in samples as rec-TIME_NOTE.wav (backs up first)
+                                      detected for the root, kept in samples as rec-TIME_NOTE.wav
   library.py flash FILE.fwsc          install a firmware package (backs up first when it can)
   library.py fetch sloop|clipper      download the newest SLOOP or Clipper release into ~/fm1-library/firmware
                                       (fetch-sloop: the same as fetch sloop)
@@ -183,6 +183,53 @@ def take_request():
     return request if time.time() - request.get("time", 0) < 120 else None
 
 
+STATUS = RUNTIME / "fm1-status.json"    # the box's live status, for the web page
+COMMANDS = RUNTIME / "fm1-commands.jsonl"  # the web page's settings commands, one JSON object a line
+
+
+def write_status(status):
+    """the box: its status for the web page (RAM: $XDG_RUNTIME_DIR), written in place like ask_box"""
+    STATUS.parent.mkdir(parents=True, exist_ok=True)
+    STATUS.write_text(json.dumps(dict(status, time=time.time())))
+
+
+def read_status():
+    """the web page: the box's status, or None if there's none or it's over 5 s old (the box isn't running)"""
+    try:
+        status = json.loads(STATUS.read_text())
+    except (OSError, ValueError):
+        return None
+    return status if time.time() - status.get("time", 0) < 5 else None
+
+
+def queue_command(command):
+    """the web page: a command for the box (settings, routes, transport, recording); appended, so several
+    clicks in a row all arrive"""
+    COMMANDS.parent.mkdir(parents=True, exist_ok=True)
+    with open(COMMANDS, "a") as f:
+        f.write(json.dumps(dict(command, time=time.time())) + "\n")
+
+
+def take_commands():
+    """the box: the queued commands (taken once), each under 30 s old"""
+    taking = COMMANDS.with_suffix(".taking")
+    try:
+        COMMANDS.rename(taking)
+        lines = taking.read_text().splitlines()
+        taking.unlink()
+    except OSError:
+        return []
+    out = []
+    for line in lines:
+        try:
+            command = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(command, dict) and time.time() - command.get("time", 0) < 30:
+            out.append(command)
+    return out
+
+
 # ---------------------------------------------------------------- the device
 
 def connect():
@@ -312,6 +359,19 @@ def job_save_project(file, source, name):
 
 
 SLOT_SECONDS = 7.3                      # a sample slot holds ~7.4 s at 22,050 Hz
+# a sample's loudest point in the slot (16-bit): SLOOP's own uploader goes to 30000, ~0.8 dB below full scale,
+# which leaves the FM-1 no room when it mixes a sample with other notes and sounds: it clips
+SAMPLE_LEVELS = {"full": 30000, "-3 dB": 23197, "-6 dB": 16422}
+SETTINGS = Path(os.environ.get("FM1_SETTINGS") or Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json")
+
+
+def sample_peak():
+    """the box's Sample level setting (Settings > More), as a peak value; -6 dB if it isn't set"""
+    try:
+        level = json.loads(SETTINGS.read_text()).get("sample_level", "-6 dB")
+    except (OSError, ValueError):
+        level = "-6 dB"
+    return SAMPLE_LEVELS.get(level, SAMPLE_LEVELS["-6 dB"])
 SILENCE = 32768 * 10 ** (-45 / 20)      # -45 dBFS: quieter than this is the silence around a take
 
 
@@ -360,16 +420,17 @@ def job_load_sample(slot, name, wavs, recording=None):
     if slot not in (1, 2, 3, 4):
         raise ValueError("SLOT is 1, 2, 3 or 4")
     with Job("load-sample") as job:
+        # no safety backup: a sample load only replaces that one slot, and the WAV it came from stays in the
+        # library. Converting first means a bad WAV stops the job before the FM-1 is touched.
         if recording:
             job.step("Trimming the recording")
             wavs = [sample_from_recording(recording)]
         job.step("Converting")
-        header, data = sloop.build_slot(name, wavs)    # bad WAVs stop here, before the FM-1 is touched
+        header, data = sloop.build_slot(name, wavs, sample_peak())
         job.step("Connecting")
         dev = connect()
         dev.require_sample_slots()
         dev.check_stopped()
-        before = safety_backup(dev, job, "before-sample")
         done, report = [0], job.progress("Loading sample")
 
         def moved(n):
@@ -377,7 +438,7 @@ def job_load_sample(slot, name, wavs, recording=None):
             report(done[0], len(data))
 
         dev.write_sample_slot(slot - 1, header, data, moved)
-        job.done(f"USR{slot}: {name.upper()[:8]}", before=before and before.name)
+        job.done(f"USR{slot}: {name.upper()[:8]}")
 
 
 def job_flash(package):

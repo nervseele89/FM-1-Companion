@@ -160,8 +160,7 @@ PipeWire writes it, so it costs almost no CPU.
   - **Play:** on the speaker, over the FM-1's live sound, with the time and a progress bar. Press stops it.
   - **Load into slot ›:** resamples the take into a sample slot (USR1–4): its first 7.3 s of sound (what a
     slot holds), trimmed and faded, with the note it plays detected and set as the root, so the sample plays
-    in tune across the keyboard. A copy goes into the samples folder (`rec-HHMMSS_A3.wav`). Backed up first,
-    like every write.
+    in tune across the keyboard. A copy goes into the samples folder (`rec-HHMMSS_A3.wav`).
   - **Delete** (hold to confirm).
 - **To get the files:** with Wi-Fi on, the web page's *Recordings* section has Download, Load into slot
   and Delete; over SSH they're in `~/fm1-library/recordings/`.
@@ -259,8 +258,9 @@ Clipper's own data works the same way as SLOOP's.
 ![Job screen](../docs/images/screen-job.png)
 
 **Safe by design:**
-- Anything that writes to the FM-1 **makes a backup first** and asks you to **hold the joystick press
-  for 2 seconds**. A short press only reminds you to hold.
+- Anything that writes to the FM-1 asks you to **hold the joystick press for 2 seconds** (a short press
+  only reminds you to hold). Restores, project loads and firmware installs **make a backup first**; a
+  sample load doesn't (it only replaces that slot, and its WAV stays in the library), which keeps it quick.
 - It refuses while the FM-1's song plays (stop it first).
 - During a firmware install the screen says *Don't unplug the FM-1*, KEY3 won't shut down, and
   Bluetooth MIDI pauses. It takes about 2 minutes. Your projects, presets and samples stay.

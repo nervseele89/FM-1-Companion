@@ -31,6 +31,7 @@ from libui import LibraryScreens
 import meters
 from meters import MeterScreens
 from midiui import MidiScreens
+from weblink import WebLink
 
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
@@ -48,6 +49,7 @@ DEFAULTS = {
     "route_presets": None,  # {"1": {"routes": ..., "saved": time}, ...}: matrix setups to recall
     "metronome": False,     # a click on the speaker in time with the clock
     "click": "mid",         # its level: "low", "mid", "high"
+    "sample_level": "-6 dB",  # how loud samples go into the FM-1: "-6 dB", "-3 dB", "full" (SLOOP's own)
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -495,7 +497,7 @@ def short_label(label):
     return label
 
 
-class App(LibraryScreens, MeterScreens, MidiScreens):
+class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
     fit = staticmethod(fit)
 
     def __init__(self, display, state):
@@ -503,6 +505,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
         self.library_init()
         self.meter_init()
         self.midi_init()
+        self.web_init()
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback(state["audio_rate"])
@@ -560,6 +563,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
             self.auto_backup()
+            self.web_publish()
             metro = (self.state["metronome"], self.sink and self.sink["name"], self.state["click"],
                      self.state["audio_rate"])
             if self.midi and metro != self.metro_sent:      # the metronome runs in the MIDI process
@@ -702,6 +706,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
         onoff = lambda on: "on" if on else "off"      # noqa: E731
         if self.settings_menu == "more":
             return [("audio", "BT audio", audio), ("rate", "Audio rate", rate), ("click", "Click level", self.state["click"]),
+                    ("sample_level", "Sample level", self.state["sample_level"]),
                     ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
                     ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
         keys = self.keys_route()
@@ -736,6 +741,11 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
             self.save_settings()
             if self.state["metronome"] and not self.sink:
                 self.say("Metronome: connect a speaker")
+        elif key == "sample_level":
+            levels = ("-6 dB", "-3 dB", "full")
+            now = self.state["sample_level"] if self.state["sample_level"] in levels else "-6 dB"
+            self.state["sample_level"] = levels[(levels.index(now) + 1) % 3]
+            self.save_settings()
         elif key == "click":
             levels = ("low", "mid", "high")
             self.state["click"] = levels[(levels.index(self.state["click"]) + 1) % 3]
@@ -1058,6 +1068,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
                 event = self.events.get(timeout=0.1 if self.screen == "meter" and self.mode != "saver" else 0.25)
             except queue.Empty:
                 event = None
+            self.web_commands()                       # the web page's settings (a file check: cheap)
             if event and event[0] in KEYS:
                 self.on_key(event[0], len(event) > 1 and event[1])
             elif event and event[0] == "status" and event[1]:

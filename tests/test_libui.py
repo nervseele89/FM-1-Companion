@@ -84,7 +84,7 @@ def test_flows():
     snap(app, "settings")
     keys(app, "up", "press")                               # More › (up from the top wraps to the end)
     assert app.settings_menu == "more" and [r[0] for r in app.settings_rows()] == [
-        "audio", "rate", "click", "midi", "pairing", "routes", "presets"]
+        "audio", "rate", "click", "sample_level", "midi", "pairing", "routes", "presets"]
     snap(app, "settings-more")
     keys(app, "left")                                      # back to the top list, on More
     assert app.settings_menu is None and app.setting == top.index("g_more") and app.screen == "settings"
@@ -482,11 +482,38 @@ def test_arp_rows_and_presets():
     assert app.screen == "settings"
 
 
+def test_web_link():
+    app = make_app()
+    app.midi = FakeMidi()
+    app.loop.reopen = lambda rate: None
+    status = app.web_status()
+    assert status["settings"]["bpm"] == 120 and status["routes"]["BT>FM-1"]["on"] and status["recording"] is None
+    app.web_publish()
+    assert library.read_status()["settings"]["metronome"] is False
+    for command in ({"cmd": "routes", "routes": {"BT>FM-1": {"transpose": 5}}},   # the page sends all of it
+                    {"cmd": "set", "key": "metronome", "value": True}, {"cmd": "set", "key": "bpm", "value": 97},
+                    {"cmd": "set", "key": "clock_mode", "value": "box"}, {"cmd": "set", "key": "click", "value": "high"},
+                    {"cmd": "set", "key": "audio_rate", "value": 44100}, {"cmd": "set", "key": "arp_on", "value": True},
+                    {"cmd": "transport", "value": "start"},
+                    {"cmd": "preset", "slot": "3", "action": "save", "name": "Night"}):
+        library.queue_command(command)
+    library.queue_command({"cmd": "set", "key": "bpm", "value": 9999})   # refused, with a message
+    app.web_commands()
+    s = app.state
+    assert s["metronome"] and s["bpm"] == 97 and s["clock_mode"] == "box" and s["click"] == "high"
+    assert s["audio_rate"] == 44100 and app.routes()["BT>FM-1"]["arp_on"] is True
+    assert app.routes()["BT>FM-1"]["transpose"] == 5 and s["route_presets"]["3"]["name"] == "Night"
+    assert ("transport", "start") in app.midi.commands and "bad setting" in app.message
+    app.web_publish()
+    assert library.read_status()["settings"]["metronome"] is True       # the page sees it
+
+
 if __name__ == "__main__":
     for name, fn in [("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
                      ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate),
                      ("test_clock", test_clock), ("test_recordings", test_recordings),
-                     ("test_midi_matrix", test_midi_matrix), ("test_arp_rows_and_presets", test_arp_rows_and_presets)]:
+                     ("test_midi_matrix", test_midi_matrix), ("test_arp_rows_and_presets", test_arp_rows_and_presets),
+                     ("test_web_link", test_web_link)]:
         fn()
         print("ok", name)
     print("all passed")

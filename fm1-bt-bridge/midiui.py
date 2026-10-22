@@ -76,22 +76,28 @@ class MidiScreens:
         return (["Load"] if saved else []) + ["Save here"] + (["Clear"] if saved else [])
 
     def preset_do(self, action):
-        slot, presets = PRESETS[self.preset_row], dict(self.presets())
-        if action == "Load":
+        self.preset_apply(PRESETS[self.preset_row], {"Load": "load", "Save here": "save", "Clear": "clear"}[action])
+        self.preset_menu = None
+
+    def preset_apply(self, slot, action, name=None):
+        """load, save (with an optional name, from the web page) or clear a preset slot"""
+        presets = dict(self.presets())
+        title = (presets.get(slot) or {}).get("name") or f"preset {slot}"
+        if action == "load" and slot in presets:
             self.state["routes"] = json.loads(json.dumps(presets[slot]["routes"]))
             if self.midi:
                 self.midi.set_routes(self.routes())
-            self.say(f"Loaded preset {slot}")
-        elif action == "Save here":
-            presets[slot] = {"routes": self.routes(), "saved": time.time()}
-            self.say(f"Saved as preset {slot}")
-        elif action == "Clear":
+            self.say(f"Loaded {title}")
+        elif action == "save":
+            name = (name if name is not None else (presets.get(slot) or {}).get("name") or "").strip()[:16]
+            presets[slot] = {"routes": self.routes(), "saved": time.time(), "name": name}
+            self.say(f"Saved as {name or f'preset {slot}'}")
+        elif action == "clear":
             presets.pop(slot, None)
             self.say(f"Preset {slot} cleared")
-        if action != "Load":
+        if action != "load":
             self.state["route_presets"] = presets
         self.save_settings()
-        self.preset_menu = None
 
     # ---- keys
 
@@ -287,7 +293,7 @@ class MidiScreens:
         for slot in PRESETS:
             saved = presets.get(slot)
             when = time.strftime("%m-%d %H:%M", time.localtime(saved["saved"])) if saved else "empty"
-            rows.append((f"Preset {slot}", when))
+            rows.append(((saved or {}).get("name") or f"Preset {slot}", when))
         self.draw_rows(d, "Route presets", rows, self.preset_row, False, "press = load/save  < back")
 
     def draw_chanmap(self, d):

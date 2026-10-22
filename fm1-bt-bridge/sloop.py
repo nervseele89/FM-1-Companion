@@ -465,19 +465,21 @@ def projects_in(file):
     return {name: objects[i] for name, i in PROJECT_IDS.items() if objects.get(i)}
 
 
-def build_slot(name, wavs):
-    """WAV paths -> (header, ADPCM data), as SLOOP's fm1_sample_upload.build"""
+def build_slot(name, wavs, peak=30000):
+    """WAV paths -> (header, ADPCM data), as SLOOP's fm1_sample_upload.build; each sample's peak scaled to `peak`
+    (SLOOP: 30000, ~0.8 dB below full scale)"""
     import sampleio as sio
+    import samplefast as fast                  # sampleio's results, several times faster on a Zero W
     zones = []
     for path in wavs:
         path = Path(path)
-        rate, x = sio.read_any_wav(path)
-        x = sio.resample(x, rate, sio.SLOT_RATE)
+        rate, x = fast.read_any_wav(path)
+        x = fast.resample(x, rate, sio.SLOT_RATE)
         if not x:
             raise SloopError("bad", f"{path.name}: no audio")
-        zones.append((sio.to_int16(x), sio.note_from_name(path.stem), None, None))
+        zones.append((fast.to_int16(x, peak), sio.note_from_name(path.stem), None, None))
     try:
-        return sio.user_slot(name, zones)
+        return fast.user_slot(name, zones)
     except ValueError as e:
         raise SloopError("bad", str(e))
 

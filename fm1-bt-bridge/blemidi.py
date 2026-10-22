@@ -554,6 +554,41 @@ def default_routes():
     return {key: dict(DEFAULT_ROUTE) for key in ROUTES}
 
 
+def clean_routes(routes):
+    """routes from outside (the web page) -> the same, checked and complete; ValueError says what's wrong"""
+    if not isinstance(routes, dict):
+        raise ValueError("routes must be an object")
+    out = default_routes()
+    for key, route in routes.items():
+        if key not in ROUTES or not isinstance(route, dict):
+            raise ValueError(f"no route {key!r}")
+        for name, value in route.items():
+            if name not in DEFAULT_ROUTE:
+                raise ValueError(f"{key}: no setting {name!r}")
+            if not ROUTE_RULES[name](value):
+                raise ValueError(f"{key}: bad {name} {value!r}")
+            out[key][name] = value
+    return out
+
+
+def _int(value, lo, hi):
+    return isinstance(value, int) and not isinstance(value, bool) and lo <= value <= hi
+
+
+ROUTE_RULES = {                         # each route setting: what it may be (checked lazily, one rule a value)
+    "on": lambda v: isinstance(v, bool), "drop_clock": lambda v: isinstance(v, bool),
+    "drop_aftertouch": lambda v: isinstance(v, bool), "drop_bend": lambda v: isinstance(v, bool),
+    "chord_on": lambda v: isinstance(v, bool), "arp_on": lambda v: isinstance(v, bool),
+    "channels": lambda v: v == "same" or _int(v, 0, 15) or (
+        isinstance(v, list) and len(v) == 16 and all(c is None or _int(c, 0, 15) for c in v)),
+    "transpose": lambda v: _int(v, -24, 24),
+    "velocity": lambda v: v in ("normal", "soft", "hard", "fixed"),
+    "fixed": lambda v: _int(v, 1, 127),
+    "chord": lambda v: isinstance(v, str) and v in CHORDS, "arp": lambda v: isinstance(v, str) and v in ARPS,
+    "arp_rate": lambda v: isinstance(v, str) and v in ARP_RATES, "arp_octaves": lambda v: _int(v, 1, 3),
+}
+
+
 class Route:
     """One crossing of the matrix: whether it passes MIDI, and what it does to it on the way.
     channels: "same", one channel for everything (0-15), or 16 entries (a channel 0-15, or None: dropped).
