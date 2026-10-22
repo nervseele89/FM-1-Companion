@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import sloop  # noqa: E402
 
 LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
-FOLDERS = ("backups", "projects", "samples", "firmware")
+FOLDERS = ("backups", "projects", "samples", "firmware", "recordings")
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
 STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 SD = Path(os.environ.get("FM1_SD_LIBRARY", "/boot/firmware/fm1-library"))
@@ -45,7 +45,8 @@ KEEP_AUTO = 20
 FIRMWARES = {"sloop": ("SLOOP", "isod89/sloop-fm1"),            # isod89's firmwares, both based on Felucca
              "clipper": ("Clipper", "isod89/clipper-fm1")}       # (Clipper: experimental)
 RELEASES = "https://api.github.com/repos/{}/releases?per_page=10"
-SUFFIXES = {"backups": (".json",), "projects": (".json",), "samples": (".wav",), "firmware": (".fwsc",)}
+SUFFIXES = {"backups": (".json",), "projects": (".json",), "samples": (".wav",), "firmware": (".fwsc",),
+            "recordings": (".wav",)}
 
 
 def folder(name):
@@ -222,6 +223,8 @@ def import_sd():
     """new files from the SD card's fm1-library folders into the library; -> names copied"""
     copied = []
     for name in FOLDERS:
+        if name == "recordings":              # made on the box, not brought in
+            continue
         source = SD / name
         if not source.is_dir():
             continue
@@ -418,6 +421,8 @@ def listing():
                     entry.update(sloop.describe(sloop.load_json(path)))
                 except sloop.SloopError:
                     entry["damaged"] = True
+            elif name == "recordings":        # 48 kHz 16-bit stereo: 192,000 bytes a second
+                entry["seconds"] = max(0, entry["bytes"] - 44) // 192000
             elif name == "projects":
                 try:
                     project = sloop.load_json(path)

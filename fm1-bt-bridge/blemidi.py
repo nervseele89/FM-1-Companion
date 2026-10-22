@@ -165,17 +165,23 @@ class UsbMidi:
         self.on_message(bytes(msg.bytes()))
 
     def send_bytes(self, data):
-        """Plain MIDI bytes from Bluetooth (running status allowed) to the FM-1."""
+        """Plain MIDI bytes (running status allowed) to the FM-1."""
         with self.lock:
             messages = self.stream.feed(data)
-        if self.out is None:
+        self.send_messages(messages)
+
+    def send_messages(self, messages):
+        """Complete MIDI messages (bytes each) to the FM-1."""
+        out = self.out
+        if out is None:
             return
-        for raw in messages:
-            try:
-                self.out.send(self.mido.Message.from_bytes(list(raw)))
-                self.last_activity = time.monotonic()
-            except (ValueError, OSError):           # a malformed message, or the FM-1 just left
-                continue
+        with self.lock:
+            for raw in messages:
+                try:
+                    out.send(self.mido.Message.from_bytes(list(raw)))
+                    self.last_activity = time.monotonic()
+                except (ValueError, OSError):       # a malformed message, or the FM-1 just left
+                    continue
 
     def label(self):
         """The port's name for the screen: "Felucca:Felucca MIDI 1 24:0" -> "Felucca"."""
@@ -441,6 +447,125 @@ def start_bluez(bridge):
     GLib.MainLoop().run()
 
 
+CLOCK, START, CONTINUE, STOP = 0xF8, 0xFA, 0xFB, 0xFC
+TRANSPORT = (CLOCK, START, CONTINUE, STOP)
+
+
+def make_realtime(priority=10):
+    """Real-time scheduling for the calling thread through RTKit (as PipeWire gets it; the installer's
+    polkit rule allows it without a desktop session). Best effort: without it the clock just wobbles more."""
+    bus = None
+    try:
+        import resource
+        import dbus
+        resource.setrlimit(resource.RLIMIT_RTTIME, (200_000, 200_000))   # RTKit insists on a limit
+        # a private connection: the shared one must be made by start_bluez, with its GLib main loop,
+        # or the MIDI service can't be exported ("BT error")
+        bus = dbus.SystemBus(private=True)
+        rtkit = dbus.Interface(bus.get_object("org.freedesktop.RealtimeKit1", "/org/freedesktop/RealtimeKit1"),
+                               "org.freedesktop.RealtimeKit1")
+        rtkit.MakeThreadRealtime(dbus.UInt64(threading.get_native_id()), dbus.UInt32(priority))
+    except Exception:
+        pass
+    finally:
+        if bus is not None:
+            bus.close()
+
+
+class ClockWatch:
+    """The tempo of a clock (24 ticks a quarter note) from the times its ticks arrived."""
+
+    def __init__(self):
+        self.ticks, self.playing = [], False
+
+    def message(self, status, now):
+        if status == CLOCK:
+            self.ticks.append(now)
+            del self.ticks[:-25]
+        elif status in (START, CONTINUE):
+            self.playing = True
+        elif status == STOP:
+            self.playing = False
+
+    def bpm(self, now):
+        """the tempo over the last quarter note, or None if no clock for half a second"""
+        t = self.ticks
+        if len(t) < 13 or now - t[-1] > 0.5:
+            return None
+        return 60.0 / ((t[-1] - t[0]) / (len(t) - 1) * 24)
+
+
+# ---------------------------------------------------------------- the MIDI matrix
+
+SOURCES, DESTINATIONS = ("BT", "FM-1", "Box"), ("FM-1", "BT")
+ROUTES = tuple(f"{s}>{d}" for s in SOURCES for d in DESTINATIONS if s != d)    # "Box": its clock, Start/Stop
+DEFAULT_ROUTE = {"on": True, "channels": "same", "transpose": 0, "velocity": "normal", "fixed": 100,
+                 "drop_clock": False, "drop_aftertouch": False, "drop_bend": False}
+CURVES = {"normal": 1.0, "soft": 0.6, "hard": 1.6}      # velocity out = 127 * (in / 127) ** exponent
+
+
+def default_routes():
+    """every route on, nothing changed: MIDI passes as it always did"""
+    return {key: dict(DEFAULT_ROUTE) for key in ROUTES}
+
+
+class Route:
+    """One crossing of the matrix: whether it passes MIDI, and what it does to it on the way.
+    channels: "same", one channel for everything (0-15), or 16 entries (a channel 0-15, or None: dropped).
+    A note-off always goes where its note-on went, so changing a route while a key is held can't leave a
+    note hanging."""
+
+    def __init__(self, settings=None):
+        self.active = {}                    # (channel, note) in -> (channel, note) out, for held notes
+        self.update(settings)
+
+    def update(self, settings):
+        self.s = dict(DEFAULT_ROUTE, **(settings or {}))
+
+    def out_channel(self, channel):
+        channels = self.s["channels"]
+        if channels == "same":
+            return channel
+        if isinstance(channels, int):
+            return channels
+        return channels[channel] if isinstance(channels, list) and len(channels) == 16 else channel
+
+    def note(self, channel, note):
+        out, moved = self.out_channel(channel), note + self.s["transpose"]
+        return (out, moved) if out is not None and 0 <= moved <= 127 else None
+
+    def velocity(self, value):
+        if self.s["velocity"] == "fixed":
+            return max(1, min(127, int(self.s["fixed"])))
+        return max(1, min(127, round(127 * (value / 127) ** CURVES.get(self.s["velocity"], 1.0))))
+
+    def apply(self, message):
+        """a complete MIDI message -> what comes out of this route (bytes), or None"""
+        s, status = self.s, message[0]
+        if status >= 0xF0:                                  # system: SysEx, clock, Start/Stop...
+            if not s["on"] or (status in TRANSPORT and s["drop_clock"]):
+                return None
+            return message
+        kind, channel = status & 0xF0, status & 0x0F
+        if kind in (0x80, 0x90) and len(message) == 3:
+            key = (channel, message[1])
+            if kind == 0x80 or message[2] == 0:             # note off (or note on at velocity 0)
+                out = self.active.pop(key, None) or (self.note(*key) if s["on"] else None)
+                return bytes([kind | out[0], out[1], message[2]]) if out else None
+            out = self.note(*key) if s["on"] else None
+            if not out:
+                return None
+            self.active[key] = out
+            return bytes([0x90 | out[0], out[1], self.velocity(message[2])])
+        if not s["on"] or (kind in (0xA0, 0xD0) and s["drop_aftertouch"]) or (kind == 0xE0 and s["drop_bend"]):
+            return None
+        if kind == 0xA0 and len(message) == 3:              # poly aftertouch: follows the note
+            out = self.note(channel, message[1])
+            return bytes([0xA0 | out[0], out[1], message[2]]) if out else None
+        out = self.out_channel(channel)
+        return None if out is None else bytes([kind | out]) + bytes(message[1:])
+
+
 LIBRARY_SYSEX = (bytes([0xF0, 0x7D, 0x46, 0x4C]),   # SLOOP's editor protocol (the box's library)
                  bytes([0xF0, 0x00, 0x59]),           # firmware update frames
                  bytes([0xF0, 0x22, 0x24, 0x35]),     # update start
@@ -486,6 +611,14 @@ class MidiBridge:
         self.pending, self.flush_queued = [], False
         self.lock = threading.Lock()
         self.usb = UsbMidi(source_match, self.from_usb)
+        self.ble_stream = MidiStream()
+        self.clock_mode, self.bpm, self.playing = "follow", 120.0, False     # "follow" or "box"
+        self.watch = {"FM-1": ClockWatch(), "BT": ClockWatch()}
+        self.routes = {key: Route() for key in ROUTES}
+
+    def set_routes(self, routes):
+        for key, route in self.routes.items():
+            route.update((routes or {}).get(key))
 
     def start(self):
         def body():
@@ -495,10 +628,69 @@ class MidiBridge:
                 self.error = str(e)[:40]
 
         threading.Thread(target=body, daemon=True).start()
+        threading.Thread(target=self.clock_loop, daemon=True).start()
+
+    # ---- clock: watch incoming clock; as clock master, send our own instead
+
+    def clock_loop(self):
+        """24 ticks a quarter note while the box is the clock master. Each tick is due at a fixed time
+        (not "sleep one interval"), so the tempo doesn't drift with how long sending takes. Measured on a
+        Zero W streaming to a speaker: the tempo is exact on average, single ticks ~3 ms early or late
+        (the Bluetooth UART's interrupts come first, even before a real-time thread)."""
+        make_realtime()
+        due = time.monotonic()
+        while True:
+            if self.clock_mode != "box":
+                time.sleep(0.05)
+                due = time.monotonic()
+                continue
+            now = time.monotonic()
+            if due > now:
+                time.sleep(due - now)
+            self.send_all(bytes([CLOCK]))
+            due += 60.0 / (self.bpm * 24)
+            if time.monotonic() - due > 0.1:  # far behind (the CPU was busy): start afresh
+                due = time.monotonic()
+
+    def transport(self, command):
+        """Start or Stop to the FM-1 and Bluetooth"""
+        self.playing = command == "start"
+        self.send_all(bytes([START if self.playing else STOP]))
+
+    def send_all(self, message):
+        """the box's own clock and Start/Stop, where the matrix's Box routes are on"""
+        if self.routes["Box>FM-1"].s["on"]:
+            self.usb.send_messages([message])
+        if self.routes["Box>BT"].s["on"]:
+            self.to_ble(message)
+
+    def clock_status(self, now):
+        """{"bpm", "source", "playing"} for the screen, or None"""
+        if self.clock_mode == "box":
+            return {"bpm": round(self.bpm), "source": "box", "playing": self.playing}
+        for source, watch in self.watch.items():
+            bpm = watch.bpm(now)
+            if bpm:
+                return {"bpm": round(bpm), "source": source, "playing": watch.playing}
+        return None
+
+    def passes(self, source, message):
+        """Looks at clock on the way; as clock master, keeps other clock and transport to itself."""
+        if message and message[0] in TRANSPORT:
+            self.watch[source].message(message[0], time.monotonic())
+            return self.clock_mode != "box"
+        return True
 
     # USB -> BLE: queue, then send from the GLib thread in as few packets as possible
     def from_usb(self, message):
-        if not (self.bluez and self.enabled and self.peer) or is_library_sysex(message):
+        if is_library_sysex(message) or not self.passes("FM-1", message):
+            return
+        message = self.routes["FM-1>BT"].apply(message)
+        if message:
+            self.to_ble(message)
+
+    def to_ble(self, message):
+        if not (self.bluez and self.enabled and self.peer):
             return
         with self.lock:
             self.pending.append(message)
@@ -521,8 +713,11 @@ class MidiBridge:
             self.peer_path, self.peer = str(device_path), self.peer or "connected"
             self.bluez["idle_add"](self.lookup_name)          # after replying to bluetoothd
         self.last_ble = time.monotonic()
+        route = self.routes["BT>FM-1"]
+        messages = [out for m in self.ble_stream.feed(strip_timestamps(packet))
+                    if self.passes("BT", m) and (out := route.apply(m))]
         if self.enabled and not self.paused:
-            self.usb.send_bytes(strip_timestamps(packet))
+            self.usb.send_messages(messages)
         log_timing(packet, self.last_ble)
 
     def lookup_name(self):
@@ -579,6 +774,12 @@ def run_child(conn, source_match, enabled):
                 bridge.open_pairing()
             elif command[0] == "pause":            # no Bluetooth notes into the FM-1 while it's flashed
                 bridge.paused = command[1]
+            elif command[0] == "clock":            # ("clock", "follow" or "box", bpm)
+                bridge.clock_mode, bridge.bpm = command[1], float(command[2])
+            elif command[0] == "transport":        # ("transport", "start" or "stop")
+                bridge.transport(command[1])
+            elif command[0] == "routes":           # ("routes", {route key: settings})
+                bridge.set_routes(command[1])
 
     threading.Thread(target=commands, daemon=True).start()
     last, next_poll = None, 0.0
@@ -588,7 +789,8 @@ def run_child(conn, source_match, enabled):
             bridge.poll()
             next_poll = now + (15 if bridge.usb_label() else 3)
         status = {"peer": bridge.peer, "error": bridge.error, "usb": bridge.usb_label(),
-                  "activity": round(bridge.activity(), 1)}  # 0.1 s steps: at most ~5 updates a second
+                  "activity": round(bridge.activity(), 1),  # 0.1 s steps: at most ~5 updates a second
+                  "clock": bridge.clock_status(now)}
         if status != last:
             try:
                 conn.send(status)
@@ -612,6 +814,7 @@ class MidiProcess:
         self.enabled, self.peer, self.error = enabled, None, None
         self.pairing_until = 0.0
         self.usb, self.last_activity = None, 0.0
+        self.clock = None                   # {"bpm", "source", "playing"} while there's a clock
 
     def start(self):
         self.proc.start()
@@ -626,6 +829,7 @@ class MidiProcess:
                 return
             self.peer, self.error = status["peer"], status["error"]
             self.usb, self.last_activity = status["usb"], status["activity"]
+            self.clock = status.get("clock")
 
     def poll(self):
         pass                                # the MIDI process watches the USB side itself
@@ -646,3 +850,12 @@ class MidiProcess:
 
     def pause(self, on):
         self.conn.send(("pause", on))
+
+    def set_clock(self, mode, bpm):
+        self.conn.send(("clock", mode, bpm))
+
+    def transport(self, command):
+        self.conn.send(("transport", command))
+
+    def set_routes(self, routes):
+        self.conn.send(("routes", routes))

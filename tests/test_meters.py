@@ -5,6 +5,7 @@
 import math
 import os
 import sys
+import time
 import tempfile
 from pathlib import Path
 
@@ -121,14 +122,14 @@ def test_keys():
 def test_reader_follows_the_screen():
     app, _ = make_app(tone([440]))
     now = 100.0
-    assert app.meter_view(now) is None and not app.levels.proc         # status screen: no recording
+    assert app.meter_view(now) == (None, None) and not app.levels.proc  # status screen: no level stream
     app.open_meters()
-    assert app.meter_view(now) == (0, 1) and app.levels.target == app.source["name"]
+    assert app.meter_view(now) == ((0, 1), None) and app.levels.target == app.source["name"]
     app.mode = "saver"
     app.meter_view(now)
     assert not app.levels.proc                                        # screen saver: stopped
     app.mode, app.source = "on", None
-    assert app.meter_view(now) == "ready" and not app.levels.proc       # no FM-1: nothing recorded
+    assert app.meter_view(now) == ("ready", None) and not app.levels.proc   # no FM-1: no level stream
 
 
 def test_every_meter_renders():
@@ -148,6 +149,68 @@ def test_every_meter_renders():
     app.source = None
     app.open_meters()
     app.render(force=True)                     # no FM-1: a message, no crash
+
+
+class FakePwRecord:
+    """stands in for pw-record: a Python process that writes the file and waits to be stopped"""
+    real = meters.subprocess.Popen
+
+    def __call__(self, cmd, **kw):
+        self.cmd = cmd
+        script = "import sys, time; open(sys.argv[1], 'wb').write(b'RIFF' + bytes(40)); time.sleep(60)"
+        return self.real([sys.executable, "-c", script, cmd[-1]], **kw)
+
+
+def test_recording():
+    fake = FakePwRecord()
+    meters.subprocess.Popen = fake
+    try:
+        app, display = make_app(tone([440]))
+        app.open_meters()
+        app.on_key("press")
+        assert app.recorder.recording() and fake.cmd[0] == "pw-record" and "alsa_input.usb-Felucca" in fake.cmd
+        path = app.recorder.path
+        assert path.parent.name == "recordings" and path.suffix == ".wav"
+        for _ in range(100):                               # the stand-in takes a moment to start
+            if path.exists():
+                break
+            time.sleep(0.05)
+        app.recorder.started -= 65                         # pretend it has run a while
+        assert app.meter_view(time.monotonic())[1] == 65
+        app.render(force=True)                             # REC 1:05 over the meter
+        app.screen = "status"
+        app.render(force=True)
+        if OUT:
+            display.image.convert("L").resize((512, 256)).save(OUT / "status-rec.png")
+        app.on_key("left")
+        app.on_key("press")                                # stop
+        assert not app.recorder.recording() and "Saved" in app.message and path.exists()
+        # the FM-1 goes away: pw-record ends, and the box says so
+        app.on_key("press")
+        app.recorder.proc.kill()
+        app.recorder.proc.wait()
+        app.meter_view(time.monotonic())
+        assert not app.recorder.proc and "stopped" in app.message
+        # a full SD card: no start; and a running recording stops
+        real_usage = meters.shutil.disk_usage
+        meters.shutil.disk_usage = lambda p: real_usage(p)._replace(free=meters.MIN_FREE - 1)
+        try:
+            app.on_key("press")
+            assert not app.recorder.recording() and "full" in app.message
+        finally:
+            meters.shutil.disk_usage = real_usage
+        app.on_key("press")
+        meters.shutil.disk_usage = lambda p: real_usage(p)._replace(free=0)
+        try:
+            app.rec_space_check = 0
+            app.meter_view(time.monotonic())
+            assert not app.recorder.recording() and "full" in app.message
+        finally:
+            meters.shutil.disk_usage = real_usage
+        app.recorder.stop()
+        assert meters.clock(65) == "1:05" and meters.clock(3725) == "1:02:05"
+    finally:
+        meters.subprocess.Popen = FakePwRecord.real
 
 
 def test_pack_pages():

@@ -84,6 +84,20 @@ def test_downloads():
     assert call(f"/api/project?backup={name}&source=C")[0] == 400       # empty
 
 
+def test_recordings():
+    data = b"RIFF" + bytes(40) + bytes(192000 * 3)                 # a 3-second "recording"
+    (library.folder("recordings") / "2026-10-22_101500_fm1.wav").write_bytes(data)
+    status, lib = jcall("/api/library")
+    rec = lib["recordings"][0]
+    assert rec["name"] == "2026-10-22_101500_fm1.wav" and rec["seconds"] == 3
+    status, body, headers = call("/files/recordings/2026-10-22_101500_fm1.wav")
+    assert status == 200 and body == data and headers["Content-Type"] == "audio/wav"
+    assert int(headers["Content-Length"]) == len(data)
+    status, reply = jcall("/api/upload?folder=recordings&name=x.wav", raw=data)
+    assert status == 400                                          # made on the box only
+    assert jcall("/api/delete", {"folder": "recordings", "name": rec["name"]})[1]["ok"]
+
+
 def test_writes_wait_for_the_box():
     name = library.listing()["backups"][0]["name"]
     status, reply = jcall("/api/ask", {"cmd": "restore", "file": name})

@@ -6,12 +6,16 @@ DIR holds DejaVuSans.ttf and DejaVuSans-Bold.ttf, the fonts the Pi uses
 (default: /usr/share/fonts/truetype/dejavu). Needs Pillow; no Pi or HAT.
 """
 import argparse
+import os
 import sys
+import tempfile
 import time
 from pathlib import Path
 
 from PIL import Image, ImageFont
 
+TMP = Path(tempfile.mkdtemp(prefix="fm1-shots-"))      # an empty library: the same pictures on any computer
+os.environ.update(FM1_LIBRARY=str(TMP / "library"), XDG_RUNTIME_DIR=str(TMP / "run"), FM1_SD_LIBRARY=str(TMP / "sd"))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fm1-bt-bridge"))
 import bridge  # noqa: E402
 import meters  # noqa: E402
@@ -41,12 +45,30 @@ class Capture:
 
 class Midi:
     enabled, error, pairing_until, peer = True, None, 0.0, "SMK-37+VA_BLE"
+    clock = {"bpm": 120, "source": "box", "playing": True}
+
+    def set_routes(self, routes):
+        pass
 
     def usb_label(self):
         return "Felucca"
 
     def activity(self):
         return time.monotonic()               # the MIDI dot on
+
+
+class Recording:
+    """meters.Recorder stand-in: 1 min 23 s into a recording"""
+    proc, path = True, TMP / "rec.wav"
+
+    def recording(self):
+        return True
+
+    def seconds(self, now=None):
+        return 83.0
+
+    def stop(self):
+        return None, 0.0
 
 
 class Loop:
@@ -62,8 +84,24 @@ def scenes(app):
     def status():
         pass
 
+    def recording():
+        app.recorder = Recording()
+
     def settings():
         app.screen, app.setting = "settings", 0
+
+    def settings_midi():
+        app.screen, app.setting, app.settings_menu = "settings", 2, "midi"
+
+    def matrix():
+        app.screen, app.mx = "matrix", [0, 0]
+
+    def route():
+        import blemidi
+        routes = blemidi.default_routes()
+        routes["BT>FM-1"].update(transpose=12, velocity="soft")
+        app.state["routes"] = routes
+        app.screen, app.route_key, app.route_row = "route", "BT>FM-1", 2
 
     def library():
         app.screen, app.lib_cursor = "library", 0
@@ -84,8 +122,9 @@ def scenes(app):
     def saver():
         app.mode = "saver"
 
-    return [("status", status), ("settings", settings), ("speakers", speakers), ("pairing", pairing),
-            ("screensaver", saver), ("library", library), ("job", job)]
+    return [("status", status), ("status-rec", recording), ("settings", settings),
+            ("settings-midi", settings_midi), ("matrix", matrix), ("route", route), ("speakers", speakers),
+            ("pairing", pairing), ("screensaver", saver), ("library", library), ("job", job)]
 
 
 def main():
@@ -98,7 +137,7 @@ def main():
         str(fonts / ("DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf")), size)
     out = Path(args.outdir)
     out.mkdir(parents=True, exist_ok=True)
-    state = dict(bridge.DEFAULTS, last_name="JBL Go 3", last_mac="00:00:00:00:00:00")
+    state = dict(bridge.DEFAULTS, last_name="JBL Go 3", last_mac="00:00:00:00:00:00", clock_mode="box")
     for name, setup in scenes(bridge.App(Capture(), state)):
         display = Capture()
         app = bridge.App(display, dict(state))
@@ -144,7 +183,7 @@ class Levels:
 
 
 def meters_sheet(state, out):
-    """The four meters side by side (2 x 2) as screen-meters.png."""
+    """Each meter on its own (screen-meter-NAME.png), and all of them on one sheet (screen-meters.png)."""
     meters.load_numpy()
     frames = []
     for i in range(len(meters.METERS)):
@@ -154,6 +193,8 @@ def meters_sheet(state, out):
         app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
         app.levels = Levels()
         app.library_state = lambda now=None: None
+        if meters.METERS[i] == "Tape":        # the tape deck while it records
+            app.recorder, app.tape_done = Recording(), 0.35
         app.open_meters()
         for _ in range(4):                    # let the needles and peak holds settle
             app.render(force=True)
@@ -162,10 +203,11 @@ def meters_sheet(state, out):
         name = f"screen-meter-{meters.METERS[i].lower()}.png"
         frames[-1].save(out / name, optimize=True)
         print("wrote", out / name)
-    w, h, gap = frames[0].width, frames[0].height, 12
-    sheet = Image.new("RGB", (2 * w + gap, 2 * h + gap), (30, 30, 30))
+    w, h, gap, cols = frames[0].width, frames[0].height, 12, 2
+    rows = (len(frames) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * w + (cols - 1) * gap, rows * h + (rows - 1) * gap), (30, 30, 30))
     for i, frame in enumerate(frames):
-        sheet.paste(frame, ((i % 2) * (w + gap), (i // 2) * (h + gap)))
+        sheet.paste(frame, ((i % cols) * (w + gap), (i // cols) * (h + gap)))
     sheet.save(out / "screen-meters.png", optimize=True)
     print("wrote", out / "screen-meters.png")
 

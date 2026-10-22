@@ -78,8 +78,15 @@ def test_flows():
     backup = setup_library()
     app = make_app()
     keys(app, "right")
-    assert app.screen == "settings" and app.settings_rows()[0][0] == "library"
+    assert app.screen == "settings" and [r[0] for r in app.settings_rows()] == ["g_audio", "g_midi", "g_clock",
+                                                                                 "library", "wifi"]
     snap(app, "settings")
+    keys(app, "press")                                     # Audio ›
+    assert app.settings_menu == "audio" and [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]
+    snap(app, "settings-audio")
+    keys(app, "left")                                      # back to the top list, on Audio
+    assert app.settings_menu is None and app.setting == 0 and app.screen == "settings"
+    keys(app, "down", "down", "down")                      # Library ›
     keys(app, "press")
     assert app.screen == "library"
     snap(app, "library")
@@ -217,7 +224,7 @@ def test_audio_rate():
     app = make_app()
     reopened = []
     app.loop.reopen = reopened.append
-    app.screen = "settings"
+    app.screen, app.settings_menu = "settings", "audio"
     app.setting = [row[0] for row in app.settings_rows()].index("rate")
     assert app.settings_rows()[app.setting][2] == "48 kHz"
     app.on_key("press")
@@ -233,9 +240,140 @@ def test_audio_rate():
     assert loop.rate == 48000 and not loop.running()
 
 
+class FakeMidi:
+    enabled, error, pairing_until, peer = True, None, 0.0, None
+
+    def __init__(self):
+        self.commands, self.clock = [], None
+
+    def set_clock(self, mode, bpm):
+        self.commands.append(("clock", mode, bpm))
+
+    def transport(self, command):
+        self.commands.append(("transport", command))
+
+    def set_routes(self, routes):
+        self.commands.append(("routes", routes))
+
+    def usb_label(self):
+        return "Felucca"
+
+    def activity(self):
+        return 0.0
+
+
+def test_clock():
+    app = make_app()
+    app.midi = FakeMidi()
+    for i in range(3):                                     # tap, tap, tap: half a second apart
+        app.tap(50.0 + i * 0.5)
+    assert app.state["clock_mode"] == "box" and app.state["bpm"] == 120
+    assert app.midi.commands[-1] == ("clock", "box", 120)
+    app.tap(60.0)                                           # after a long pause: a new tap tempo
+    assert app.taps == [60.0] and app.state["bpm"] == 120
+    app.on_key("press", True)                               # hold on the status screen: Start
+    assert app.midi.commands[-1] == ("transport", "start")
+    app.on_key("press", True)
+    assert app.midi.commands[-1] == ("transport", "stop")
+    app.midi.clock = {"bpm": 120, "source": "box", "playing": True}
+    assert app.clock_text() == "▶ 120 BPM"
+    app.state["clock_mode"] = "follow"
+    app.midi.clock = None
+    assert app.clock_text() == "follow"                    # following, and no clock arrives
+    app.midi.clock = {"bpm": 98, "source": "FM-1", "playing": False}
+    assert app.clock_text() == "follow 98"
+    app.state["clock_mode"] = "box"
+    app.midi.clock = {"bpm": 120, "source": "box", "playing": True}
+    app.message, app.job_busy = None, lambda: None        # no message box or job in the picture
+    snap(app, "status-clock")
+    # Settings: Clock row switches follow/box; Tempo row edits with up/down
+    app.screen, app.settings_menu = "settings", "clock"
+    rows = [row[0] for row in app.settings_rows()]
+    app.setting = rows.index("clock")
+    app.on_key("press")
+    assert app.state["clock_mode"] == "follow" and app.midi.commands[-1] == ("clock", "follow", 120)
+    app.setting = rows.index("tempo")
+    app.on_key("press")
+    assert app.editing == "tempo"
+    app.on_key("up")
+    app.on_key("up")
+    app.on_key("down")
+    assert app.state["bpm"] == 121 and app.screen == "settings"
+    app.message = None
+    snap(app, "settings-tempo")
+    app.on_key("press")
+    assert app.editing is None
+    app.set_clock(bpm=999)
+    assert app.state["bpm"] == bridge.BPM_RANGE[1]
+
+
+def test_midi_matrix():
+    app = make_app()
+    app.midi = FakeMidi()
+    app.screen, app.settings_menu = "settings", "midi"
+    app.setting = [row[0] for row in app.settings_rows()].index("routes")
+    app.on_key("press")
+    assert app.screen == "matrix"
+    snap(app, "matrix")
+    app.on_key("right")
+    app.on_key("left")
+    app.on_key("left")
+    assert app.screen == "settings" and app.settings_menu == "midi"     # left from the first column: back
+    app.on_key("press")
+    app.on_key("press")                                   # BT > FM-1
+    assert app.screen == "route" and app.route_key == "BT>FM-1"
+    snap(app, "route")
+    app.on_key("press")                                   # Route on -> off
+    assert app.routes()["BT>FM-1"]["on"] is False and app.midi.commands[-1][0] == "routes"
+    app.on_key("press")
+    app.on_key("down")                                    # Channels
+    app.on_key("press")
+    app.on_key("up")                                      # same -> all to 1
+    app.on_key("up")                                      # -> all to 2
+    app.on_key("press")
+    assert app.routes()["BT>FM-1"]["channels"] == 1 and app.route_edit is None
+    app.on_key("down")                                    # Transpose
+    app.on_key("press")
+    for _ in range(3):
+        app.on_key("up")
+    app.on_key("down")
+    snap(app, "route-transpose")
+    app.on_key("left")
+    assert app.routes()["BT>FM-1"]["transpose"] == 2
+    app.on_key("down")                                    # Velocity: normal -> soft -> hard -> fixed 40
+    app.on_key("press")
+    for _ in range(3):
+        app.on_key("up")
+    app.on_key("press")
+    assert app.routes()["BT>FM-1"]["velocity"] == "fixed" and app.routes()["BT>FM-1"]["fixed"] == 40
+    # Channels: custom opens the 16-channel table
+    app.route_row = 1
+    app.on_key("press")
+    for _ in range(15):                                   # all to 2 -> all to 3 ... all to 16, then custom
+        app.on_key("up")
+    app.on_key("press")
+    assert app.screen == "chanmap" and app.routes()["BT>FM-1"]["channels"] == list(range(16))
+    app.on_key("press")
+    app.on_key("down")                                    # channel 1 -> off (wraps below 1)
+    app.on_key("press")
+    assert app.routes()["BT>FM-1"]["channels"][0] is None
+    snap(app, "chanmap")
+    app.on_key("left")
+    assert app.screen == "route" and app.route_rows()[1][2] == "custom ›"
+    app.on_key("left")
+    app.mx = [2, 1]                                       # Box > BT: only on/off
+    app.on_key("press")
+    assert [r[0] for r in app.route_rows()] == ["on"]
+    app.on_key("left")
+    app.mx = [0, 1]                                       # BT > BT: no such route
+    app.on_key("press")
+    assert app.screen == "matrix"
+
+
 if __name__ == "__main__":
     for name, fn in [("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
-                     ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate)]:
+                     ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate),
+                     ("test_clock", test_clock), ("test_midi_matrix", test_midi_matrix)]:
         fn()
         print("ok", name)
     print("all passed")

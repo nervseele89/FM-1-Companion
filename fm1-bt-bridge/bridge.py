@@ -28,7 +28,9 @@ from PIL import Image, ImageDraw, ImageFont
 
 import library
 from libui import LibraryScreens
+import meters
 from meters import MeterScreens
+from midiui import MidiScreens
 
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
@@ -40,6 +42,9 @@ DEFAULTS = {
     "midi_enabled": True,
     "auto_backup": "boot",  # "off", "boot" (once at start-up), or minutes between backups: 2, 5, 10, 30
     "audio_rate": 48000,    # PipeWire's rate (Hz), 48000 or 44100: the FM-1 is opened at this rate
+    "clock_mode": "follow", # MIDI clock: "follow" (pass on and show incoming clock) or "box" (send our own)
+    "bpm": 120,             # the box's tempo when it's the clock master
+    "routes": None,         # the MIDI matrix: {"BT>FM-1": {...}, ...}; None = every route on, unchanged
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -47,7 +52,10 @@ PIN_DC, PIN_RST = 24, 25
 KEYS = {"key1": 21, "key2": 20, "key3": 16, "up": 6, "down": 19, "left": 5, "right": 26, "press": 13}
 DIM_AFTER, OFF_AFTER = 60, 300          # seconds without a key press or a status change (OLED burn-in)
 SCAN_SECONDS = 10
+TAP_GAP = 2.0                           # seconds: a longer pause between taps starts a new tap tempo
+BPM_RANGE = (30, 300)
 RECONNECT_EVERY = 20
+GROUPS = {"g_audio": ("audio", "Audio"), "g_midi": ("midi", "MIDI"), "g_clock": ("clock", "Clock")}
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|[\x01\x02]")
 UNNAMED = re.compile(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}")
 
@@ -454,13 +462,14 @@ def short_label(label):
     return label
 
 
-class App(LibraryScreens, MeterScreens):
+class App(LibraryScreens, MeterScreens, MidiScreens):
     fit = staticmethod(fit)
 
     def __init__(self, display, state):
         self.display, self.state = display, state
         self.library_init()
         self.meter_init()
+        self.midi_init()
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback(state["audio_rate"])
@@ -474,9 +483,12 @@ class App(LibraryScreens, MeterScreens):
         self.midi = None                      # blemidi.MidiBridge, when BlueZ and mido are there
         self.wifi, self.next_wifi = None, 0.0
         self.setting = 0                      # cursor on the settings page
+        self.settings_menu = None             # None: the top list; "audio", "midi" or "clock": a group
         self.flash_paused = False
         self.no_source_since, self.healed_at = None, -1e9
         self.busy = None                      # text shown while a user action runs
+        self.editing = None                   # "tempo" while up/down change the tempo in Settings
+        self.taps, self.playing = [], False   # tap tempo times; Start/Stop sent by the box
         self.message, self.message_until = None, 0.0
         self.last_activity = time.monotonic()
         self.mode = "on"                      # "on", "dim", "saver"
@@ -646,13 +658,24 @@ class App(LibraryScreens, MeterScreens):
         left = self.midi.pairing_until - time.monotonic() if self.midi else 0
         wifi = {True: "on", False: "off", None: "?"}[self.wifi]
         rate = f"{self.state['audio_rate'] / 1000:g} kHz"
-        return [("library", "Library", "›"), ("speaker", "Speaker", speaker), ("audio", "BT audio", audio),
-                ("rate", "Audio rate", rate), ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
-                ("wifi", "Wi-Fi", wifi)]
+        tempo = f"{self.state['bpm']} BPM"
+        if self.settings_menu == "audio":
+            return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
+        if self.settings_menu == "midi":
+            return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                    ("routes", "MIDI routes", "›")]
+        if self.settings_menu == "clock":
+            return [("clock", "Clock", self.state["clock_mode"]),
+                    ("tempo", "Tempo", f"± {tempo}" if self.editing == "tempo" else tempo)]
+        clock = f"box {self.state['bpm']}" if self.state["clock_mode"] == "box" else "follow"
+        return [("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"), ("g_clock", "Clock", clock),
+                ("library", "Library", "›"), ("wifi", "Wi-Fi", wifi)]
 
     def change_setting(self):
         key = self.settings_rows()[self.setting][0]
-        if key == "library":
+        if key in GROUPS:
+            self.settings_menu, self.setting = GROUPS[key][0], 0
+        elif key == "library":
             self.open_library()
         elif key == "speaker" or (key == "audio" and not self.state["last_mac"]):
             self.start_scan()                 # pick and pair a speaker or headphones
@@ -664,6 +687,12 @@ class App(LibraryScreens, MeterScreens):
             self.save_settings()
             self.loop.reopen(rate)
             self.say(f"{rate / 1000:g} kHz: audio restarts")
+        elif key == "clock":
+            self.set_clock("box" if self.state["clock_mode"] == "follow" else "follow")
+        elif key == "tempo":
+            self.editing = "tempo"
+        elif key == "routes":
+            self.open_matrix()
         elif key == "midi" and self.midi:
             on = not self.midi.enabled
             self.midi.set_enabled(on)
@@ -678,9 +707,49 @@ class App(LibraryScreens, MeterScreens):
             threading.Thread(target=set_wifi, args=(on,), daemon=True).start()
             self.say("Wi-Fi on: SSH works again" if on else "Wi-Fi off (stays off)")
 
+    # ---- MIDI clock
+
+    def set_clock(self, mode=None, bpm=None):
+        self.state["clock_mode"] = mode or self.state["clock_mode"]
+        self.state["bpm"] = int(min(BPM_RANGE[1], max(BPM_RANGE[0], round(bpm or self.state["bpm"]))))
+        self.save_settings()
+        if self.midi:
+            self.midi.set_clock(self.state["clock_mode"], self.state["bpm"])
+
+    def tap(self, now):
+        """Tap tempo: from the second tap on, the average of the last taps; makes the box the master."""
+        if self.taps and now - self.taps[-1] > TAP_GAP:
+            self.taps = []
+        self.taps = (self.taps + [now])[-5:]
+        if len(self.taps) < 2:
+            return
+        beat = (self.taps[-1] - self.taps[0]) / (len(self.taps) - 1)
+        self.set_clock("box", 60 / beat)
+        self.say(f"Box clock {self.state['bpm']} BPM", 1.5)
+
+    def start_stop(self):
+        if not self.midi:
+            return
+        self.playing = not self.playing
+        self.midi.transport("start" if self.playing else "stop")
+        self.say("Start" if self.playing else "Stop", 1)
+
+    def clock_text(self):
+        """Box clock: "120 BPM"; following: "follow", or "follow 120" while clock arrives; ▶ in front while
+        playing. None without MIDI."""
+        if not self.midi:
+            return None
+        clock = getattr(self.midi, "clock", None)
+        if self.state["clock_mode"] != "box":
+            text = f"follow {clock['bpm']}" if clock else "follow"
+        else:
+            text = f"{clock['bpm']} BPM" if clock else f"{self.state['bpm']} BPM"
+        return ("▶ " if clock and clock.get("playing") else "") + text
+
     def shutdown(self):
         self.busy = "Shutting down"
         self.render(force=True)
+        self.recorder.stop()                  # finishes the WAV file
         self.loop.stop()
         time.sleep(1.5)
         self.display.power(False)
@@ -693,7 +762,7 @@ class App(LibraryScreens, MeterScreens):
         if self.mode != "on":                 # the first press only wakes the screen
             self.wake()
             return
-        if key == "press" and held and self.screen != "confirm":
+        if key == "press" and held and self.screen not in ("confirm", "status"):
             return                            # holding press only confirms (the press itself already acted)
         if key == "key3":
             if self.flash_running():
@@ -703,7 +772,7 @@ class App(LibraryScreens, MeterScreens):
             else:
                 self.say("Hold KEY3 to power off")
             return
-        if self.meter_key(key, held) or self.library_key(key, held):
+        if self.meter_key(key, held) or self.library_key(key, held) or self.midi_key(key, held):
             return
         if self.screen == "status":
             if key == "key1":
@@ -712,15 +781,27 @@ class App(LibraryScreens, MeterScreens):
                 self.disconnect() if held else self.reconnect()
             elif key in ("up", "down"):
                 self.volume_step(5 if key == "up" else -5)
+            elif key == "press":
+                self.start_stop() if held else self.tap(time.monotonic())
             elif key == "right":
                 self.screen, self.setting, self.next_wifi = "settings", 0, 0.0    # fresh Wi-Fi state
+                self.settings_menu = None
             elif key == "left":
                 self.open_meters()
+        elif self.screen == "settings" and self.editing == "tempo":
+            if key in ("up", "down"):
+                self.set_clock(bpm=self.state["bpm"] + (1 if key == "up" else -1))
+            elif key in ("press", "left", "right"):
+                self.editing = None
         elif self.screen == "settings":
             if key in ("up", "down"):
                 self.setting = (self.setting + (1 if key == "down" else -1)) % len(self.settings_rows())
             elif key in ("press", "right"):
                 self.change_setting()
+            elif key == "left" and self.settings_menu:      # back up to the top list, on the group
+                group = next(k for k, (name, _) in GROUPS.items() if name == self.settings_menu)
+                self.settings_menu = None
+                self.setting = [row[0] for row in self.settings_rows()].index(group)
             elif key == "left":
                 self.screen = "status"
         else:
@@ -756,15 +837,16 @@ class App(LibraryScreens, MeterScreens):
         """Everything the screen shows right now. Drawing a frame takes ~75 ms on a Zero W, so
         render() only draws when this changes."""
         if self.mode == "saver":
-            return ("saver", int(now // 20), self.loop.running(), bool(self.midi and self.midi.peer))
+            return ("saver", int(now // 20), self.loop.running(), bool(self.midi and self.midi.peer),
+                    self.recorder.recording())
         return (self.screen, self.busy and (self.busy, int(now * 2) % 4),
                 self.message if now < self.message_until else None, self.loop.running(),
                 self.source and self.source["label"], self.sink and self.sink["label"], self.connecting,
                 self.state["last_name"], self.auto, self.volume,
-                self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4),
+                self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4), self.clock_text(),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
-                tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting,
-                self.library_view(now), self.meter_view(now))
+                tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting, self.settings_menu,
+                self.library_view(now), self.meter_view(now), self.midi_view())
 
     def render(self, force=False):
         now = time.monotonic()
@@ -779,7 +861,8 @@ class App(LibraryScreens, MeterScreens):
         else:
             {"scan": self.draw_scan, "settings": self.draw_settings, "library": self.draw_library,
              "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job,
-             "meter": lambda d: None}.get(
+             "meter": lambda d: None, "matrix": self.draw_matrix, "route": self.draw_route,
+             "chanmap": self.draw_chanmap}.get(
                 self.screen, self.draw_status)(d)
             if self.busy:
                 dots = "." * (int(now * 2) % 4)
@@ -795,6 +878,8 @@ class App(LibraryScreens, MeterScreens):
         live = self.loop.running()
         d.text((0, 0), "FM-1 > BT", font=self.f_title, fill=1)
         tag = "LIVE" if live else "idle"
+        if self.recorder.recording():
+            tag, live = "REC " + meters.clock(self.recorder.seconds()), True
         w = d.textlength(tag, font=self.f_small)
         if live:
             d.rectangle((124 - w, 0, 127, 11), fill=1)
@@ -824,7 +909,7 @@ class App(LibraryScreens, MeterScreens):
             percent = running.get("percent")
             hint = running.get("job", "job") + (f" {int(percent)}%" if percent is not None else "…")
         else:
-            hint = "settings >"
+            hint = self.clock_text() or "settings >"
         d.text((128 - d.textlength(hint, font=self.f_small), 53), hint, font=self.f_small, fill=1)
 
     def draw_saver(self, d, now):
@@ -832,6 +917,8 @@ class App(LibraryScreens, MeterScreens):
         text = "FM-1 " + ("LIVE" if self.loop.running() else "idle")
         if self.midi and self.midi.peer:
             text += " +MIDI"
+        if self.recorder.recording():
+            text += " REC"
         w = int(d.textlength(text, font=self.f_small))
         step = int(now // 20)
         x, y = (step * 37) % (128 - w), (step * 23) % 54
@@ -849,7 +936,8 @@ class App(LibraryScreens, MeterScreens):
 
     def draw_settings(self, d):
         rows = self.settings_rows()
-        d.text((0, 0), "Settings", font=self.f_title, fill=1)
+        title = next((t for name, t in GROUPS.values() if name == self.settings_menu), "Settings")
+        d.text((0, 0), title, font=self.f_title, fill=1)
         where = f"{self.setting + 1}/{len(rows)}"
         d.text((127 - d.textlength(where, font=self.f_small), 2), where, font=self.f_small, fill=1)
         d.line((0, 14, 127, 14), fill=1)
@@ -862,7 +950,8 @@ class App(LibraryScreens, MeterScreens):
             value = fit(d, value, self.f_body, 70)
             w = d.textlength(value, font=self.f_body)
             d.text((125 - w, y), value, font=self.f_body, fill=0 if selected else 1)
-        d.text((0, 53), "press = change   < back", font=self.f_small, fill=1)
+        hint = "up/down = tempo  < done" if self.editing == "tempo" else "press = change   < back"
+        d.text((0, 53), hint, font=self.f_small, fill=1)
 
     def draw_scan(self, d):
         d.text((0, 0), "BT audio out", font=self.f_title, fill=1)
@@ -963,6 +1052,8 @@ def main():
         import blemidi
         midi = blemidi.MidiProcess(state["source_match"], state["midi_enabled"])
         midi.start()
+        midi.set_clock(state["clock_mode"], state["bpm"])
+        midi.set_routes(state["routes"])
     app = App(display, state)
     app.midi = midi
     if not sim:
@@ -973,6 +1064,7 @@ def main():
     try:
         app.run()
     finally:
+        app.recorder.stop()
         app.loop.stop()
 
 

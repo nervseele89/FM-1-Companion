@@ -47,6 +47,7 @@ install -D -m 644 "$DIR/blemidi.py"                             ~/.local/share/f
 install -D -m 644 "$DIR/sloop.py"                               ~/.local/share/fm1-bridge/sloop.py
 install -D -m 644 "$DIR/libui.py"                               ~/.local/share/fm1-bridge/libui.py
 install -D -m 644 "$DIR/meters.py"                              ~/.local/share/fm1-bridge/meters.py
+install -D -m 644 "$DIR/midiui.py"                              ~/.local/share/fm1-bridge/midiui.py
 install -D -m 755 "$DIR/library.py"                             ~/.local/share/fm1-bridge/library.py
 install -D -m 755 "$DIR/web.py"                                 ~/.local/share/fm1-bridge/web.py
 mkdir -p ~/.local/share/fm1-bridge/vendor/sloop ~/fm1-library/backups ~/fm1-library/projects \

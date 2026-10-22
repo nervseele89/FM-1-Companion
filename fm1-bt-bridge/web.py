@@ -9,6 +9,7 @@ Python's standard library only. Port: $FM1_WEB_PORT (default 80; install.sh lets
 """
 import json
 import os
+import shutil
 import sys
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -100,8 +101,9 @@ class Handler(BaseHTTPRequestHandler):
             path = safe_path(folder, urllib.parse.unquote(name))
             if not path or not path.is_file():
                 return self.fail("no such file", 404)
-            ctype = {"samples": "audio/wav", "firmware": "application/octet-stream"}.get(folder, "application/json")
-            self.send(200, path.read_bytes(), ctype, {"Content-Disposition": f'attachment; filename="{path.name}"'})
+            ctype = {"samples": "audio/wav", "recordings": "audio/wav",
+                     "firmware": "application/octet-stream"}.get(folder, "application/json")
+            self.send_file(path, ctype)
         elif url.path == "/api/project":
             path = safe_path("backups", query.get("backup", ""))
             source = query.get("source", "")
@@ -152,8 +154,18 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(200, {"ok": True, "message": f"deleted {path.name}"})
         self.fail("not found", 404)
 
+    def send_file(self, path, ctype):
+        """a download in pieces: a long recording is bigger than the Zero W's memory would like"""
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(path.stat().st_size))
+        self.send_header("Content-Disposition", f'attachment; filename="{path.name}"')
+        self.end_headers()
+        with open(path, "rb") as f:
+            shutil.copyfileobj(f, self.wfile, 256 * 1024)
+
     def upload(self, folder, name):
-        path = safe_path(folder, name)
+        path = safe_path(folder, name) if folder != "recordings" else None
         if not path:
             return self.fail("that kind of file doesn't go there")
         data = self.body(MAX_UPLOAD)
@@ -246,6 +258,9 @@ label.file{display:inline-block}label.file input{display:none}
 <section><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's, based on Felucca. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".fwsc" onchange="upload('firmware',this)"><button onclick="this.previousElementSibling.click()">Upload a .fwsc…</button></label></div></section>
 
+<section><h2>Recordings</h2><p class="meta" style="margin:0 0 6px">What the box recorded from the FM-1 (48 kHz WAV): on the box, open the meters (joystick left) and press to start and stop.</p>
+<div id="recordings"></div></section>
+
 <p class="meta">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. A backup is made first.</p>
 </main>
 <script>
@@ -254,7 +269,8 @@ const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({"&":"&amp;","<":
 const q = (s) => esc(JSON.stringify(s));            // a JS string literal inside an onclick attribute
 const when = (t) => new Date(t * 1000).toLocaleString([], {month:"short", day:"numeric", hour:"2-digit", minute:"2-digit"});
 const fw = (s) => esc((s || "?").split(" ").pop());
-let lib = {backups:[], projects:[], samples:[], firmware:[]};
+let lib = {backups:[], projects:[], samples:[], firmware:[], recordings:[]};
+const mins = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 
 function note(msg, ok) { $("note").innerHTML = `<span class="${ok ? "ok" : "bad"}">${esc(msg)}</span>`; }
 async function post(url, body) {
@@ -299,6 +315,13 @@ function render() {
     <div class="row"><button onclick="ask({cmd:'flash', file:${q(f.name)}})">Install…</button><button onclick="del('firmware',${q(f.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No firmware yet: Get SLOOP update or Get Clipper, or upload a .fwsc.</p>`;
 }
+function renderRecordings() {
+  $("recordings").innerHTML = lib.recordings.length ? lib.recordings.map((r) => `<div class="item"><div><div class="name">${when(r.date)}</div>
+    <div class="meta">${mins(r.seconds)} · ${(r.bytes / 1048576).toFixed(1)} MB · ${esc(r.name)}</div></div>
+    <div class="row"><a href="/files/recordings/${encodeURIComponent(r.name)}" download><button>Download</button></a>
+    <button onclick="del('recordings',${q(r.name)})">Delete</button></div></div>`).join("")
+    : `<p class="empty">No recordings yet: on the box, open the meters (joystick left) and press to record.</p>`;
+}
 function loadSamples() {
   const files = [...document.querySelectorAll(".pick:checked")].map((c) => c.value);
   if (!files.length) return note("Tick at least one WAV", false);
@@ -318,7 +341,7 @@ async function update() {
   return running || s.waiting;
 }
 async function poll() { setTimeout(poll, (await update()) ? 700 : 3000); }
-async function refresh() { lib = await fetch("/api/library").then((r) => r.json()).catch(() => lib); render(); }
+async function refresh() { lib = await fetch("/api/library").then((r) => r.json()).catch(() => lib); render(); renderRecordings(); }
 refresh(); poll();
 </script></body></html>
 """

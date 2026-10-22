@@ -56,15 +56,16 @@ The screen shows the bridge about 30–40 seconds after power-on.
 | **KEY2** | Reconnect headphones · *hold*: disconnect | – | – |
 | **KEY3** | *Hold 3 s*: shut down safely | *Hold 3 s*: shut down | *Hold 3 s*: shut down |
 | **Joystick up/down** | Volume | Move | Move |
-| **Joystick press** | – | Pair the selected headphones | Change the setting |
+| **Joystick press** | Tap tempo · *hold 2 s*: Start/Stop | Pair the selected headphones | Change the setting |
 | **Joystick right** | Open settings | Pair | Change the setting |
 | **Joystick left** | Open the meters | Back | Back |
 
 **Meters** (joystick left from the status screen): the FM-1's sound as **Bars** (peak level with peak
-hold), **VU** (two needles, 0 VU = −18 dBFS), **Spectrum** (16 bands, 50 Hz–7.5 kHz) or **Scope** (the
-waveform). Joystick up/down switches meter (the choice is remembered); right goes back. The screen
-stays on while sound plays. The first time after a boot it shows "Loading meters..." for about 8 s.
-They take about a quarter of the Zero W's CPU while shown, and nothing otherwise.
+hold), **VU** (two needles, 0 VU = −18 dBFS), **Spectrum** (16 bands, 50 Hz–7.5 kHz), **Scope** (the
+waveform) or **Tape** (a reel-to-reel deck). Joystick up/down switches meter (the choice is remembered),
+**press records** (below), right goes back. The screen stays on while sound plays. The first time after a
+boot it shows "Loading meters..." for about 8 s. They take about a quarter of the Zero W's CPU while
+shown, and nothing otherwise.
 
 ![Meters](../docs/images/screen-meters.png)
 
@@ -77,6 +78,8 @@ They take about a quarter of the Zero W's CPU while shown, and nothing otherwise
 - **OUT**: the speaker or headphones.
 - **MIDI**: the Bluetooth MIDI device connected. The dot blinks with MIDI traffic.
 - **VOL**: the speaker volume (joystick up/down).
+- **Bottom right**: the MIDI clock (*follow*, *follow 98* or *120 BPM*, see MIDI clock below), or a
+  library job's progress. **REC 1:23** replaces LIVE while recording.
 
 To protect the OLED from burn-in, the screen dims after a minute. After five minutes it shows only
 a small **FM-1 LIVE** (or *idle*) that moves around the screen, so you can still tell it's running.
@@ -85,18 +88,24 @@ Any key brings the full screen back; that key press does nothing else.
 Always shut down with **KEY3** (hold) before pulling the power. Pulling the power on a running Pi
 can lose recently changed files or corrupt the SD card.
 
-**Settings** (joystick right; seven rows, three at a time):
+**Settings** (joystick right): five rows, three of them groups. Press opens a group; left goes back up.
 
 ![Settings](../docs/images/screen-settings.png)
 
 | Setting | What it does |
 |---|---|
+| **Audio ›** | |
+| · **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
+| · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
+| · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). |
+| **MIDI ›** | |
+| · **BLE MIDI** on/off | Shows or hides "FM-1 Bridge" to MIDI apps. It's remembered. |
+| · **Pairing** | Opens a 2-minute window in which a device can pair with the bridge. Only needed on systems that want to pair first (below). |
+| · **MIDI routes ›** | The MIDI matrix (below). |
+| **Clock ›** (shows *follow* or *box 120*) | |
+| · **Clock** follow / box | *follow*: pass on incoming clock and show its tempo. *box*: the box sends its own clock (and keeps other clock out). |
+| · **Tempo** | The box's tempo: press, then up/down (hold to go faster); left when done. Tap tempo on the status screen sets it too. |
 | **Library ›** | Backups, projects, samples and firmware (below). |
-| **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
-| **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
-| **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). |
-| **BLE MIDI** on/off | Shows or hides "FM-1 Bridge" to MIDI apps. It's remembered. |
-| **Pairing** | Opens a 2-minute window in which a device can pair with the bridge. Only needed on systems that want to pair first (below). |
 | **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
 
 ### Headphones
@@ -115,7 +124,7 @@ Connect from your device's MIDI app; you don't pair through the system Bluetooth
   **FM-1 Bridge** → *Connect*.
 - **Android:** use an app that supports Bluetooth MIDI (for example *MIDI BLE Connect*), then your
   music app.
-- **Windows:** open **Pairing** in the bridge's settings, then pair "FM-1 Bridge" in Windows'
+- **Windows:** open Settings → MIDI › **Pairing** on the bridge, then pair "FM-1 Bridge" in Windows'
   Bluetooth settings within 2 minutes. Whether a Windows music app can use Bluetooth MIDI depends on
   the app.
 
@@ -125,6 +134,68 @@ Then MIDI flows both ways:
   over a USB cable. For example, in Sloop, channels 1–3 play the synths and channel 10 the drums.
 - **From the FM-1:** whatever it sends over USB MIDI (keys, sequencer, clock, depending on the
   firmware's MIDI settings) goes to your device.
+
+### Recording
+
+On any meter screen, press the joystick to start recording the FM-1, and again to stop. The file is a
+48 kHz, 16-bit stereo WAV (about 11 MB a minute) in `~/fm1-library/recordings/`, named by date and time;
+PipeWire writes it, so it costs almost no CPU.
+
+![Recording](../docs/images/screen-status-rec.png)
+
+- While recording, **REC and the time** show on the meter and in place of LIVE on the status screen, and
+  *REC* on the screensaver. Leaving the meters doesn't stop it.
+- It **stops by itself** if the FM-1 goes away or the SD card is down to its last 200 MB, and says so.
+  Shutting down with KEY3 finishes the file first.
+- **The Tape meter** turns its reels while sound plays; while recording, the tape winds from the left reel
+  to the right one, a full reel every 30 minutes.
+- **To get the files:** with Wi-Fi on, the web page's *Recordings* section has Download and Delete; over
+  SSH they're in `~/fm1-library/recordings/`.
+
+### MIDI clock
+
+The status screen's bottom right shows the clock:
+
+| Settings → Clock › | Status screen |
+|---|---|
+| **follow** (the default) | *follow*, or *follow 98* while clock arrives from the FM-1 or Bluetooth; it's passed on as before |
+| **box** | *120 BPM*: the box sends its own clock (24 a quarter note) to the FM-1 and Bluetooth, and keeps other clock out |
+
+▶ in front means playing (after a Start).
+
+- **Tempo:** Settings → Clock › **Tempo**, press, then up/down (hold to go faster), left when done. Or
+  **tap tempo**: tap the joystick press 2–5 times on the status screen. Tapping makes the box the clock
+  master; a pause of over 2 s starts a new tap.
+- **Start/Stop:** hold the joystick press for 2 seconds on the status screen.
+- **Where the box's clock goes:** the *Box clock* row of the MIDI matrix.
+- For SLOOP to follow, set its sync to external MIDI clock.
+- **How tight it is:** the tempo is exact on average; single ticks are about 3 ms early or late on a Zero W
+  that's streaming audio, because the Bluetooth radio's interrupts come first (the clock already runs as a
+  real-time thread). A wired MIDI clock is tighter.
+
+### MIDI matrix
+
+Settings → MIDI › **MIDI routes**:
+
+![MIDI routes](../docs/images/screen-matrix.png)
+
+Rows are sources (Bluetooth, the FM-1, the box's clock), columns destinations (the FM-1, Bluetooth). A
+filled square is a route that's on; "–" marks a crossing that would only echo back. The joystick moves;
+left from the first column goes back. **Press opens a route:**
+
+![A route](../docs/images/screen-route.png)
+
+| Row | What it does |
+|---|---|
+| **Route** on/off | Whether anything passes. |
+| **Channels** | *same*, *all to N* (every channel to one), or *custom ›*: 16 rows, each input channel to any channel or off. |
+| **Transpose** | ±24 semitones (notes and poly aftertouch). |
+| **Velocity** | *normal*; *soft* (light playing comes out louder); *hard* (loud takes more force); *fixed* 40, 64, 80, 100 or 127. |
+| **Drop clock / aftertouch / bend** | Keep clock and Start/Stop, channel and poly aftertouch, or pitch-bend off this route (less traffic and jitter). |
+
+Values change with press, then up/down, then press or left. The *Box clock* routes have only on/off. Out
+of the box every route is on and changes nothing. A note-off always goes where its note-on went, so
+changing a route while you hold a key can't leave a note hanging. The routes are remembered.
 
 ## Library: backups, projects, samples, firmware
 
@@ -175,7 +246,8 @@ Clipper's own data works the same way as SLOOP's.
 - **upload** WAVs, firmware (`.fwsc`), backups and project files; **download** backups, and any
   project of a backup as its own project file to share;
 - load **several WAVs into one slot**: each becomes a key zone, with its root note taken from the file
-  name (`bass_C2.wav`, `lead_A4.wav`). A slot holds about 7 seconds in all.
+  name (`bass_C2.wav`, `lead_A4.wav`). A slot holds about 7 seconds in all;
+- **download or delete recordings** made on the box.
 
 Anything on the page that writes to the FM-1 still has to be **confirmed on the box** (hold press), so
 nothing on your network can change the FM-1 without you.
@@ -285,9 +357,10 @@ Then pair again with KEY1.
 | File | Installed to | Purpose |
 |---|---|---|
 | `bridge.py` | `~/.local/share/fm1-bridge/` | The OLED app, headphone control and audio routing |
-| `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service and its link to the FM-1's USB MIDI |
+| `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service, its link to the FM-1's USB MIDI, the clock and the MIDI matrix |
 | `libui.py` | `~/.local/share/fm1-bridge/` | The Library screens on the box |
-| `meters.py` | `~/.local/share/fm1-bridge/` | The meter screen (bars, VU, spectrum, scope) |
+| `meters.py` | `~/.local/share/fm1-bridge/` | The meter screen (bars, VU, spectrum, scope, tape) and recording |
+| `midiui.py` | `~/.local/share/fm1-bridge/` | The MIDI matrix screens |
 | `library.py` | `~/.local/share/fm1-bridge/` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
 | `sloop.py` | `~/.local/share/fm1-bridge/` | SLOOP's editor protocol: backups, projects, sample slots |
 | `web.py` | `~/.local/share/fm1-bridge/` | The web page |
