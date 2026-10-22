@@ -1,7 +1,7 @@
 """Audio meters for the bridge's OLED: the FM-1's sound as level bars, VU needles, a spectrum or a scope.
 
 From the status screen, joystick left opens the meters; up/down picks one (remembered); right goes back;
-press starts and stops a recording (Recorder: a 48 kHz WAV in the library's recordings folder).
+press starts and stops a recording (Recorder: a WAV in the library's recordings folder).
 While the meter screen is open, LevelReader records the FM-1's input at 16 kHz with pw-cat (a second,
 read-only stream next to the headphone loopback). The sums run in numpy once per frame: plain Python
 manages ~2 us a sample on a Zero W, too slow for 32,000 samples a second. numpy is imported the first time
@@ -259,18 +259,31 @@ class LevelReader:
         self.proc, self.target = None, None
 
 
+def wav_seconds(path):
+    """how long a WAV the recorder wrote lasts, from its size and the byte rate in its header"""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(44)
+        rate = int.from_bytes(head[28:32], "little") if head[:4] == b"RIFF" else 0
+        return max(0, path.stat().st_size - 44) / (rate or 192000)
+    except OSError:
+        return 0.0
+
+
 class Recorder:
-    """pw-record writing the FM-1's input to a WAV file (48 kHz, 16-bit stereo), with PipeWire doing the
-    writing: next to nothing for the Zero W's CPU. Stopping it (SIGTERM) finishes the WAV header."""
+    """pw-record writing the FM-1's input to a WAV file (16-bit stereo, at the FM-1's own rate), with PipeWire
+    doing the writing: next to nothing for the Zero W's CPU. Stopping it (SIGTERM) finishes the WAV header.
+    At any other rate pw-record resamples every block itself, and a busy Zero W falls behind and drops
+    blocks: a 96 s take came out 79 s long."""
 
     def __init__(self):
         self.proc, self.path, self.started = None, None, 0.0
 
-    def start(self, target, path):
+    def start(self, target, path, rate=48000):
         self.stop()
         try:
             self.proc = subprocess.Popen(
-                ["pw-record", "--target", target, "--rate", "48000", "--channels", "2", "--format", "s16",
+                ["pw-record", "--target", target, "--rate", str(rate), "--channels", "2", "--format", "s16",
                  "-P", "{ node.dont-reconnect = true }", str(path)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
@@ -315,7 +328,7 @@ class Player:
             self.proc = None
             return False
         self.path, self.started = path, time.monotonic()
-        self.length = max(0, path.stat().st_size - 44) / 192000          # 48 kHz 16-bit stereo
+        self.length = wav_seconds(path)
         return True
 
     def playing(self):
@@ -404,7 +417,7 @@ class MeterScreens:
             self.say("SD card full")
             return
         path = folder / f"{datetime.now():%Y-%m-%d_%H%M%S}_fm1.wav"
-        if not self.recorder.start(self.source["name"], path):
+        if not self.recorder.start(self.source["name"], path, self.state["audio_rate"]):
             self.say("Can't record (pw-record?)")
 
     def recording_tick(self, now):

@@ -560,8 +560,11 @@ def listing():
                     entry.update(sloop.describe(sloop.load_json(path)))
                 except sloop.SloopError:
                     entry["damaged"] = True
-            elif name == "recordings":        # 48 kHz 16-bit stereo: 192,000 bytes a second
-                entry["seconds"] = max(0, entry["bytes"] - 44) // 192000
+            elif name == "recordings":        # 16-bit stereo, 44.1 or 48 kHz: the byte rate is in the header
+                with open(path, "rb") as f:
+                    head = f.read(44)
+                rate = int.from_bytes(head[28:32], "little") if head[:4] == b"RIFF" else 0
+                entry["seconds"] = max(0, entry["bytes"] - 44) // (rate or 192000)
             elif name == "projects":
                 try:
                     project = sloop.load_json(path)
