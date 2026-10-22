@@ -8,31 +8,41 @@ with an overlay of each button press. The music was played on the FM-1 and recor
 
 ![The bridge: a Pi Zero W with the Waveshare OLED HAT, streaming the FM-1 to a JBL Go 3](docs/images/device.jpg)
 
-A small Bluetooth box for the **M-VAVE FM-1** pocket synth running custom firmware such as
+A pocket-sized companion box for the **M-VAVE FM-1** pocket synth running custom firmware such as
 [Sloop](https://github.com/isod89/sloop-fm1) or [Felucca](https://github.com/hugelton/Felucca).
-Those firmwares never switch the FM-1's radio on, so this adds the Bluetooth from outside: a
-Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, connected to the FM-1 by USB.
+It started as a way to add the Bluetooth those firmwares leave switched off, and grew into a small studio
+sidekick: it plays the FM-1 through wireless speakers and keyboards, records it, shapes its MIDI, shows what
+it's doing on eleven meters, and looks after everything stored on it, with no computer needed. It's a
+Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, plugged into the FM-1 by USB, and you run it from its
+own screen and joystick or from your phone.
 
-- **Audio out:** the FM-1's USB audio plays on Bluetooth headphones or a speaker.
-- **MIDI in and out:** the Pi shows up as a Bluetooth MIDI device, **"FM-1 Bridge"**, so a
-  keyboard, iPad, phone or computer can play the FM-1 wirelessly and receive what it sends.
-- **For playing:** record the FM-1 from the box, play takes back or resample them into the FM-1, a MIDI
-  clock (tempo readout, or the box as clock master with tap tempo and Start/Stop) with a metronome, arp and
-  chord memory, and a MIDI matrix that routes, transposes, re-channels, reshapes velocity and filters MIDI.
+- **Wireless audio and MIDI:** the FM-1 plays on Bluetooth headphones or a speaker, and the box shows up
+  as a Bluetooth MIDI device, **"FM-1 Bridge"**, so a keyboard, iPad, phone or computer can play the FM-1
+  and hear back what it sends.
+- **A recorder:** record the FM-1 to WAV from the box, play takes back on the speaker, or turn one into a
+  sample on the FM-1 (trimmed, and tuned to the note it plays).
+- **Playing tools:** a MIDI clock (follow your keyboard's clock, or be the master with tap tempo and
+  Start/Stop), a metronome, an arpeggiator and chord memory.
+- **A MIDI matrix:** route the keyboard, the FM-1 and the box to each other; transpose, re-channel,
+  reshape velocity and filter, with four presets.
 - **Eleven meters:** level bars, VU needles, spectrum, scope, a reel-to-reel tape deck, a tuner, a MIDI
   keyboard view, a waterfall, a stereo goniometer, a level history and a beat counter.
-- **A library for the FM-1 (v2, SLOOP 2.3+):** back up and restore everything on it, load projects and
-  samples, and install firmware (it downloads [SLOOP](https://github.com/isod89/sloop-fm1) and, if you
-  want it, isod89's experimental synthesizer firmware [Clipper](https://github.com/isod89/clipper-fm1)),
-  from the box or from a web page on your phone. No computer needed. Backups are SLOOP's own backup files,
-  so they also open in SLOOP's web editor.
-- **Its own screen and controls:** status, meters, settings and the library on the HAT's OLED, keys and
-  joystick. Ready about a minute after power-on.
+- **Looks after the FM-1 (SLOOP 2.3+):** back up and restore everything on it (by hand or automatically),
+  load projects and samples, and install firmware. It downloads [SLOOP](https://github.com/isod89/sloop-fm1)
+  and, if you want it, isod89's experimental synthesizer firmware [Clipper](https://github.com/isod89/clipper-fm1).
+  Backups are SLOOP's own backup files, so they also open in SLOOP's web editor.
+- **A web app on your phone** (`http://fm1bridge.local`, Wi-Fi on): live status, volume and the playing
+  settings, the MIDI matrix, recordings you can play in the browser, and uploads and downloads for the library.
+- **Its own screen and controls:** status, meters and a short settings menu in sections, on the HAT's OLED,
+  keys and joystick. Ready about a minute after power-on.
+- **Coming in v3:** 5-pin DIN MIDI In, Out and Thru.
 
 ```
-                         ┌──Bluetooth A2DP───▶ headphones / speaker
-FM-1 ──USB──▶ Pi Zero W ─┤
- (audio + MIDI)          └◀─Bluetooth LE MIDI─▶ keyboard / iPad / phone / Mac
+                            ┌── Bluetooth audio ──▶ headphones / speaker
+                            ├◀── Bluetooth MIDI ──▶ keyboard / iPad / phone / Mac
+FM-1 ◀── USB ──▶ Pi Zero W ─┤
+ (audio, MIDI, backups,     ├◀── Wi-Fi ───────────▶ web app on your phone
+  samples, firmware)        └── OLED + joystick: meters, recorder, settings
 ```
 
 Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 and 2.8 on the FM-1, a JBL Go 3
