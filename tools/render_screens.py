@@ -45,7 +45,8 @@ class Capture:
 
 class Midi:
     enabled, error, pairing_until, peer = True, None, 0.0, "SMK-37+VA_BLE"
-    clock = {"bpm": 120, "source": "box", "playing": True}
+    clock = {"bpm": 120, "tempo": 120.0, "source": "box", "playing": True, "bar": time.monotonic() - 0.55}
+    notes, chans = [60, 64, 67], (1 << 0) | (1 << 9)     # a C major chord; channels 1 and 10 busy
 
     def set_routes(self, routes):
         pass
@@ -71,6 +72,20 @@ class Recording:
         return None, 0.0
 
 
+class Playing:
+    """meters.Player stand-in: 12 s into a 47 s take"""
+    length = 47.0
+
+    def playing(self):
+        return True
+
+    def seconds(self, now=None):
+        return 12.0
+
+    def stop(self):
+        pass
+
+
 class Loop:
     def running(self):
         return True
@@ -90,8 +105,8 @@ def scenes(app):
     def settings():
         app.screen, app.setting = "settings", 0
 
-    def settings_midi():
-        app.screen, app.setting, app.settings_menu = "settings", 2, "midi"
+    def settings_more():
+        app.screen, app.setting, app.settings_menu = "settings", 5, "more"
 
     def matrix():
         app.screen, app.mx = "matrix", [0, 0]
@@ -105,6 +120,15 @@ def scenes(app):
 
     def library():
         app.screen, app.lib_cursor = "library", 0
+
+    def recordings():
+        import library as lib
+        take = "2026-10-22_081530_fm1.wav"
+        (lib.folder("recordings") / take).write_bytes(b"RIFF" + bytes(40) + bytes(192000 * 47))
+        app.pick_recording(take)
+
+    def player():
+        app.player, app.player_name, app.screen = Playing(), "2026-10-22_081530_fm1.wav", "player"
 
     def job():
         app.screen, app.job_title = "job", "Firmware"
@@ -123,8 +147,9 @@ def scenes(app):
         app.mode = "saver"
 
     return [("status", status), ("status-rec", recording), ("settings", settings),
-            ("settings-midi", settings_midi), ("matrix", matrix), ("route", route), ("speakers", speakers),
-            ("pairing", pairing), ("screensaver", saver), ("library", library), ("job", job)]
+            ("settings-more", settings_more), ("matrix", matrix), ("route", route), ("speakers", speakers),
+            ("pairing", pairing), ("screensaver", saver), ("library", library), ("recordings", recordings),
+            ("player", player), ("job", job)]
 
 
 def main():
@@ -160,14 +185,20 @@ def main():
 class Levels:
     """meters.LevelReader stand-in: a bass note, a chord and some hiss, louder on the left"""
 
+    CHORDS = ((98, 392, 494), (110, 440, 554), (87, 349, 440), (131, 523, 659))   # G, A, F, C: moving music
+
     def __init__(self):
+        self.frame, self.seq, self.target, self.proc = 0, 1, None, None
+        self.block = self.make(0)
+
+    def make(self, frame):
         np = meters.numpy()
-        t = np.arange(1600) / meters.RATE
-        v = (0.35 * np.sin(2 * np.pi * 98 * t) + 0.15 * np.sin(2 * np.pi * 392 * t)
-             + 0.12 * np.sin(2 * np.pi * 494 * t) + 0.06 * np.sin(2 * np.pi * 2350 * t)
-             + 0.01 * np.random.default_rng(1).standard_normal(len(t)))
-        self.block = (np.stack([v, v * 0.7], axis=1) * 32767).astype(np.int16)
-        self.seq, self.target, self.proc = 1, None, None
+        t = np.arange(meters.RECENT_N) / meters.RATE
+        bass, a, b = self.CHORDS[(frame // 10) % len(self.CHORDS)]
+        fade = 0.35 + 0.65 * (1 - (frame % 10) / 10)                 # each chord struck, then fading
+        v = fade * (0.35 * np.sin(2 * np.pi * bass * t) + 0.15 * np.sin(2 * np.pi * a * t)
+                    + 0.12 * np.sin(2 * np.pi * b * t) + 0.06 * np.sin(2 * np.pi * 2350 * t))             + 0.01 * np.random.default_rng(frame).standard_normal(len(t))
+        return (np.stack([v, v * 0.7], axis=1) * 32767).astype(np.int16)
 
     def start(self, target):
         self.target, self.proc = target, True
@@ -179,6 +210,8 @@ class Levels:
         pass
 
     def take(self):
+        self.block = self.make(self.frame)
+        self.frame += 1
         return self.block, self.block
 
 
@@ -193,12 +226,19 @@ def meters_sheet(state, out):
         app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
         app.levels = Levels()
         app.library_state = lambda now=None: None
+        app.midi = Midi()
         if meters.METERS[i] == "Tape":        # the tape deck while it records
             app.recorder, app.tape_done = Recording(), 0.35
         app.open_meters()
-        for _ in range(4):                    # let the needles and peak holds settle
+        name = meters.METERS[i]
+        if name == "History":                 # 50 s of a song's loudness, as if it had been playing
+            app.m_hist = [-6 - 18 * abs(((k % 32) - 16) / 16) - (8 if k % 7 == 0 else 0) for k in range(128)]
+            app.m_hnext = time.monotonic() + 60
+        count = 54 if name == "Waterfall" else 4                     # the waterfall fills its 54 rows
+        for _ in range(count):
             app.render(force=True)
-            time.sleep(0.1)
+            if name != "Waterfall":
+                time.sleep(0.1)               # needles, peak holds and smoothing settle
         frames.append(oled(display.image))
         name = f"screen-meter-{meters.METERS[i].lower()}.png"
         frames[-1].save(out / name, optimize=True)

@@ -176,6 +176,45 @@ def test_library_jobs():
     assert listing["projects"][0]["title"] == "Night Drive"
 
 
+def write_recording(path, before=1.0, sound=10.0, hz=110.0):
+    """a 48 kHz stereo recording: silence, a sawtooth-like synth note, silence"""
+    import numpy as np
+    t = np.arange(int(48000 * sound)) / 48000
+    note = sum(np.sin(2 * math.pi * hz * k * t) / k for k in range(1, 6)) * 8000
+    x = np.concatenate([np.zeros(int(48000 * before)), note, np.zeros(48000)])
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(48000)
+        w.writeframes(np.repeat(x.astype("<i2"), 2).tobytes())
+    return path
+
+
+def test_resample_a_recording():
+    rec = write_recording(library.folder("recordings") / "2026-10-22_001217_fm1.wav")
+    out = library.sample_from_recording(rec)
+    assert out.parent.name == "samples" and out.name == "rec-001217_A2.wav", out.name   # 110 Hz: A2
+    with wave.open(str(out)) as w:
+        assert w.getframerate() == 22050 and w.getnchannels() == 1
+        seconds = w.getnframes() / 22050
+        first = struct.unpack("<200h", w.readframes(200))
+    assert 7.2 < seconds <= library.SLOT_SECONDS + 0.01, seconds                  # cut to fit a slot
+    assert max(abs(v) for v in first) > 1000                                    # starts at the sound
+    silent = library.folder("recordings") / "2026-10-22_000000_fm1.wav"
+    write_recording(silent, sound=0.0)
+    try:
+        library.sample_from_recording(silent)
+        raise AssertionError("a silent recording was accepted")
+    except sloop.SloopError as e:
+        assert "silence" in str(e)
+    # the whole job, into USR2 of the pretend FM-1
+    fake = fake_fm1.FakeFM1()
+    use(fake)
+    library.job_load_sample(2, "REC0012", [], recording=str(rec))
+    assert library.read_state()["state"] == "done", library.read_state()
+    assert fake.objects[33][8:15] == b"REC0012"
+
+
 def test_timed_backups_skip_unchanged():
     fake = fake_fm1.FakeFM1()
     use(fake)

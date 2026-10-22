@@ -95,6 +95,10 @@ def test_recordings():
     assert int(headers["Content-Length"]) == len(data)
     status, reply = jcall("/api/upload?folder=recordings&name=x.wav", raw=data)
     assert status == 400                                          # made on the box only
+    assert jcall("/api/ask", {"cmd": "load-recording", "file": rec["name"], "slot": 3})[1]["ok"]
+    request = library.take_request()
+    assert request["args"][:3] == ["load-recording", "3", "REC1015"] and request["title"] == "Load recording?"
+    assert jcall("/api/ask", {"cmd": "load-recording", "file": "../x.wav", "slot": 3})[0] == 400
     assert jcall("/api/delete", {"folder": "recordings", "name": rec["name"]})[1]["ok"]
 
 

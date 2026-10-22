@@ -10,11 +10,12 @@ from datetime import datetime
 from pathlib import Path
 
 import library
+from meters import Player, clock
 
 SLOTS = ["USR1", "USR2", "USR3", "USR4"]
 TARGETS = [("working", "Working project"), ("A", "Project A"), ("B", "Project B"), ("C", "Project C"),
            ("D", "Project D")]
-WRITES = ("restore", "load-project", "load-sample", "flash")
+WRITES = ("restore", "load-project", "load-sample", "load-recording", "flash")
 AUTO_CHOICES = ["off", "boot", 2, 5, 10, 30]            # the "auto_backup" setting: minutes between backups
 AUTO_LABELS = {"off": "off", "boot": "at start"}
 
@@ -51,6 +52,7 @@ class LibraryScreens:
         self.lib_cursor = 0
         self.pick = None                      # {"title", "items": [(label, value, payload)], "cursor", "on", "back"}
         self.confirm = None                   # {"title", "lines", "action", "back"}
+        self.player, self.player_name = Player(), None    # a recording playing on the speaker
         self.job_title, self.job_back = "", "library"
         self.job_state, self.job_read = None, 0.0
         self.autobackup_flag = Path(library.RUNTIME) / "fm1-autobackup.done"
@@ -128,7 +130,8 @@ class LibraryScreens:
     def library_rows(self):
         """(key, label, value)"""
         return [("backup", "Back up now", ""), ("restore", "Restore ›", ""), ("project", "Load project ›", ""),
-                ("sample", "Load sample ›", ""), ("firmware", "Firmware ›", ""), ("sd", "Import SD card", ""),
+                ("sample", "Load sample ›", ""), ("recording", "Recordings ›", ""),
+                ("firmware", "Firmware ›", ""), ("sd", "Import SD card", ""),
                 ("auto", "Auto backup", self.auto_label(self.auto_mode()))]
 
     def open_library(self):
@@ -156,6 +159,9 @@ class LibraryScreens:
         elif key == "sample":
             items = [(Path(s["name"]).stem, "wav", s["name"]) for s in listing["samples"]]
             self.open_pick("Sample", items, self.pick_sample, "No WAV files yet")
+        elif key == "recording":
+            items = [(short_date(r["name"]), clock(r.get("seconds", 0)), r["name"]) for r in listing["recordings"]]
+            self.open_pick("Recordings", items, self.pick_recording, "No recordings yet")
         elif key == "firmware":
             items = [(Path(f["name"]).stem, "", f["name"]) for f in listing["firmware"]]
             if self.wifi:                     # isod89's two firmwares, from their GitHub releases
@@ -221,6 +227,42 @@ class LibraryScreens:
                                                                      str(path)], "Load sample")),
                        "", back="pick")
 
+    def pick_recording(self, name):
+        """what to do with a recording: play it on the speaker, resample it into a slot, or delete it"""
+        actions = [("Play", "", "play"), ("Load into slot ›", "", "load"), ("Delete", "", "delete")]
+        self.open_pick(short_date(name), actions, lambda action: self.recording_action(name, action), "")
+
+    def recording_action(self, name, action):
+        path = library.folder("recordings") / name
+        if action == "play":
+            if not self.sink:
+                self.say("No speaker connected")
+            elif self.player.start(self.sink["name"], path):
+                self.player_name, self.screen = name, "player"
+            else:
+                self.say("Can't play (pw-play?)")
+        elif action == "load":
+            self.pick_recording_slot(name)
+        elif action == "delete":
+            def delete():
+                path.unlink(missing_ok=True)
+                self.screen = "library"
+                self.say("Deleted")
+            seconds = max(0, path.stat().st_size - 44) // 192000 if path.exists() else 0
+            self.ask("Delete?", [short_date(name), f"{clock(seconds)} recorded"], delete)
+
+    def pick_recording_slot(self, name):
+        """a recording into a slot: trimmed to its first 7.3 s of sound, the note it plays as the root"""
+        path = library.folder("recordings") / name
+        items = [(slot, "", k + 1) for k, slot in enumerate(SLOTS)]
+        label = "REC" + (name.split("_")[1][:4] if name.count("_") >= 2 else "")
+        self.open_pick("Into slot", items,
+                       lambda slot: self.ask("Load recording?", [f"{short_date(name)}: first 7 s",
+                                                                 f"into USR{slot} (backed up first)"],
+                                             lambda: self.start_job(["load-recording", str(slot), label,
+                                                                     str(path)], "Load recording")),
+                       "", back="pick")
+
     def pick_firmware(self, choice):
         if isinstance(choice, tuple):         # ("fetch", "sloop" / "clipper")
             title = library.FIRMWARES[choice[1]][0]
@@ -262,12 +304,29 @@ class LibraryScreens:
                 back = self.confirm["back"]
                 self.screen = "library" if back == "pick" and not self.pick else back
             return True
+        if self.screen == "player":
+            if key in ("press", "left", "right") and not held:
+                self.player.stop()
+                self.screen = "library"
+            return True
         if self.screen == "job":
             state = self.library_state()
             if key in ("left", "press") and not job_running(state):
                 self.screen = self.job_back if self.job_back in ("library", "status") else "library"
             return True
         return False
+
+    def draw_player(self, d):
+        d.text((0, 0), "Playing", font=self.f_title, fill=1)
+        d.line((0, 14, 127, 14), fill=1)
+        d.text((0, 16), short_date(self.player_name or ""), font=self.f_body, fill=1)
+        now, length = self.player.seconds(), self.player.length
+        text = f"{clock(now)} / {clock(length)}"
+        d.text((127 - d.textlength(text, font=self.f_body), 29), text, font=self.f_body, fill=1)
+        d.rectangle((0, 42, 127, 49), outline=1)
+        if length:
+            d.rectangle((2, 44, 2 + int(123 * min(1.0, now / length)), 47), fill=1)
+        d.text((0, 53), "press = stop", font=self.f_small, fill=1)
 
     # ---- drawing
     def library_view(self, now):
@@ -278,6 +337,13 @@ class LibraryScreens:
             return ("pick", self.pick["title"], self.pick["cursor"], tuple(i[:2] for i in self.pick["items"]))
         if self.screen == "confirm":
             return ("confirm", self.confirm["title"], tuple(self.confirm["lines"]))
+        if self.screen == "player":
+            if not self.player.playing():     # played to the end: back to the Library
+                self.player.stop()
+                self.screen = "library"
+                self.say("Played to the end", 1.5)
+                return ("library", self.lib_cursor)
+            return ("player", self.player_name, int(self.player.seconds(now) * 2))
         if self.screen == "job":
             s = state or {}
             return ("job", s.get("state"), s.get("step"), s.get("percent") and int(s["percent"]), s.get("message"))

@@ -373,6 +373,22 @@ def start_bluez(bridge):
             app.path, {}, reply_handler=ignore, error_handler=ignore)
         set_advertising(bridge.enabled)
         GLib.timeout_add_seconds(5, close_pairing)    # bluetoothd turns Pairable back on as it powers up
+        GLib.timeout_add_seconds(2, refresh_keyboards)
+
+    def refresh_keyboards():
+        """MIDI devices still linked from before this service existed (the bridge restarted, or the keyboard
+        connected first at boot) write to a service that's gone: their MIDI goes nowhere until they look it up
+        again. Disconnect them so they reconnect and find it; headphones and speakers are left alone."""
+        objects = dbus.Interface(bus.get_object(BLUEZ, "/"), OM).GetManagedObjects()
+        for path, ifaces in objects.items():
+            dev = ifaces.get("org.bluez.Device1")
+            uuids = [str(u) for u in dev.get("UUIDs", [])] if dev else []
+            if dev and dev.get("Connected") and not any(u.startswith("0000110b") for u in uuids)                     and path != bridge.peer_path:
+                try:
+                    dbus.Interface(bus.get_object(BLUEZ, path), "org.bluez.Device1").Disconnect()
+                except dbus.DBusException:
+                    pass
+        return False
 
     def close_pairing():
         if state["adapter"] and time.monotonic() >= bridge.pairing_until:
@@ -473,26 +489,49 @@ def make_realtime(priority=10):
 
 
 class ClockWatch:
-    """The tempo of a clock (24 ticks a quarter note) from the times its ticks arrived."""
+    """The tempo and beat grid of a clock (24 ticks a quarter note) from the times its ticks arrived. Over
+    Bluetooth ticks arrive bunched (several to a radio packet), so the grid is a straight line fitted through
+    the last 48 ticks (two beats), not the arrival time of any one tick."""
 
     def __init__(self):
-        self.ticks, self.playing = [], False
+        self.ticks, self.playing = [], False   # [(tick number, arrival time)]
+        self.count = 0                          # ticks since Start (or since the clock appeared)
 
     def message(self, status, now):
         if status == CLOCK:
-            self.ticks.append(now)
-            del self.ticks[:-25]
+            self.ticks.append((self.count, now))
+            del self.ticks[:-48]
+            self.count += 1
         elif status in (START, CONTINUE):
             self.playing = True
+            if status == START:
+                self.count, self.ticks = 0, []      # the next tick is beat 1 of bar 1
         elif status == STOP:
             self.playing = False
 
-    def bpm(self, now):
-        """the tempo over the last quarter note, or None if no clock for half a second"""
+    def fit(self, now):
+        """(seconds per tick, time of tick 0) by least squares, or None if no clock for half a second"""
         t = self.ticks
-        if len(t) < 13 or now - t[-1] > 0.5:
+        if len(t) < 13 or now - t[-1][1] > 0.5:
             return None
-        return 60.0 / ((t[-1] - t[0]) / (len(t) - 1) * 24)
+        n = len(t)
+        mx, my = sum(k for k, _ in t) / n, sum(v for _, v in t) / n
+        sxx = sum((k - mx) ** 2 for k, _ in t)
+        if not sxx:
+            return None
+        per = sum((k - mx) * (v - my) for k, v in t) / sxx
+        return (per, my - per * mx) if per > 0 else None
+
+    def bpm(self, now):
+        f = self.fit(now)
+        return 60.0 / (f[0] * 24) if f else None
+
+    def bar(self, now):
+        """when the current bar (96 ticks) began, on the fitted grid"""
+        f = self.fit(now)
+        if not f:
+            return None
+        return f[1] + f[0] * 96 * (self.ticks[-1][0] // 96)
 
 
 # ---------------------------------------------------------------- the MIDI matrix
@@ -500,8 +539,14 @@ class ClockWatch:
 SOURCES, DESTINATIONS = ("BT", "FM-1", "Box"), ("FM-1", "BT")
 ROUTES = tuple(f"{s}>{d}" for s in SOURCES for d in DESTINATIONS if s != d)    # "Box": its clock, Start/Stop
 DEFAULT_ROUTE = {"on": True, "channels": "same", "transpose": 0, "velocity": "normal", "fixed": 100,
-                 "drop_clock": False, "drop_aftertouch": False, "drop_bend": False}
+                 "drop_clock": False, "drop_aftertouch": False, "drop_bend": False,
+                 "chord_on": False, "chord": "maj", "arp_on": False, "arp": "up", "arp_rate": "1/8",
+                 "arp_octaves": 1}
 CURVES = {"normal": 1.0, "soft": 0.6, "hard": 1.6}      # velocity out = 127 * (in / 127) ** exponent
+CHORDS = {"oct": (0, 12), "5th": (0, 7), "maj": (0, 4, 7), "min": (0, 3, 7), "7": (0, 4, 7, 10),
+          "maj7": (0, 4, 7, 11), "m7": (0, 3, 7, 10)}    # chord memory: the notes one key plays
+ARPS = ("up", "down", "updown", "played", "random")
+ARP_RATES = {"1/4": 24, "1/8": 12, "1/8T": 8, "1/16": 6}  # clock ticks (24 a quarter note) per step
 
 
 def default_routes():
@@ -512,15 +557,38 @@ def default_routes():
 class Route:
     """One crossing of the matrix: whether it passes MIDI, and what it does to it on the way.
     channels: "same", one channel for everything (0-15), or 16 entries (a channel 0-15, or None: dropped).
-    A note-off always goes where its note-on went, so changing a route while a key is held can't leave a
-    note hanging."""
+    chord_on: one key plays a chord (chord: which, CHORDS). arp_on: the held notes (chords included) are played
+    one at a time on the clock (tick(), 24 a quarter note), ARP_RATES apart, each for half a step (arp: the
+    pattern, ARPS). Switching either off keeps the choice of chord and pattern for next time.
+    A note-off always stops what its note-on started, so changing a route while a key is held can't leave a
+    note hanging. apply() and tick() run on different threads: a lock keeps them apart."""
 
     def __init__(self, settings=None):
-        self.active = {}                    # (channel, note) in -> (channel, note) out, for held notes
+        self.active = {}                    # (channel, note) in -> [(channel, note) out], for held notes
+        self.held = []                      # arp: [(channel, note, velocity)] in the order played
+        self.sounding, self.ticks, self.step = None, 0, 0     # arp: the note playing, ticks counted, steps
+        self.lock = threading.Lock()
         self.update(settings)
 
     def update(self, settings):
-        self.s = dict(DEFAULT_ROUTE, **(settings or {}))
+        """new settings -> the note-offs that must go out now (an arp switched off mid-note)"""
+        with self.lock:
+            self.s = dict(DEFAULT_ROUTE, **(settings or {}))
+            if self.s["arp"] not in ARPS:     # settings saved before arp_on: "off" was a pattern then
+                self.s["arp"] = "up"
+            if self.s["chord"] not in CHORDS:
+                self.s["chord"] = "maj"
+            if not self.arp_active():
+                self.held = []
+                return self.silence()
+            return []
+
+    def silence(self):
+        if not self.sounding:
+            return []
+        channel, note = self.sounding
+        self.sounding = None
+        return [bytes([0x80 | channel, note, 0])]
 
     def out_channel(self, channel):
         channels = self.s["channels"]
@@ -534,36 +602,117 @@ class Route:
         out, moved = self.out_channel(channel), note + self.s["transpose"]
         return (out, moved) if out is not None and 0 <= moved <= 127 else None
 
+    def chord(self, channel, note):
+        """the (channel, note) outs one played note makes: its chord, mapped and transposed"""
+        outs = []
+        for interval in self.shape():
+            out = self.note(channel, note + interval)
+            if out and out not in outs:
+                outs.append(out)
+        return outs
+
+    def shape(self):
+        """the intervals one key plays: the chord's, or just the note"""
+        return CHORDS[self.s["chord"]] if self.s["chord_on"] else (0,)
+
     def velocity(self, value):
         if self.s["velocity"] == "fixed":
             return max(1, min(127, int(self.s["fixed"])))
         return max(1, min(127, round(127 * (value / 127) ** CURVES.get(self.s["velocity"], 1.0))))
 
     def apply(self, message):
-        """a complete MIDI message -> what comes out of this route (bytes), or None"""
+        """a complete MIDI message -> the first message out of this route (bytes), or None"""
+        out = self.apply_all(message)
+        return out[0] if out else None
+
+    def apply_all(self, message):
+        """a complete MIDI message -> what comes out of this route: a list of messages (a chord: several;
+        with the arp on, notes wait for the clock)"""
+        with self.lock:
+            return self._apply(message)
+
+    def _apply(self, message):
         s, status = self.s, message[0]
         if status >= 0xF0:                                  # system: SysEx, clock, Start/Stop...
             if not s["on"] or (status in TRANSPORT and s["drop_clock"]):
-                return None
-            return message
+                return []
+            return [message]
         kind, channel = status & 0xF0, status & 0x0F
         if kind in (0x80, 0x90) and len(message) == 3:
             key = (channel, message[1])
-            if kind == 0x80 or message[2] == 0:             # note off (or note on at velocity 0)
-                out = self.active.pop(key, None) or (self.note(*key) if s["on"] else None)
-                return bytes([kind | out[0], out[1], message[2]]) if out else None
-            out = self.note(*key) if s["on"] else None
-            if not out:
-                return None
-            self.active[key] = out
-            return bytes([0x90 | out[0], out[1], self.velocity(message[2])])
+            off = kind == 0x80 or message[2] == 0           # note off (or note on at velocity 0)
+            if s["arp_on"] and s["on"]:                     # the arp plays the held notes on the clock
+                self.held = [h for h in self.held if h[:2] != key]
+                if not off:
+                    self.held.append((channel, message[1], message[2]))
+                return [] if self.held else self.silence()
+            if off:
+                outs = self.active.pop(key, None) or (self.chord(*key) if s["on"] else [])
+                return [bytes([kind | c, n, message[2]]) for c, n in outs]
+            outs = self.chord(*key) if s["on"] else []
+            if outs:
+                self.active[key] = outs
+            return [bytes([0x90 | c, n, self.velocity(message[2])]) for c, n in outs]
         if not s["on"] or (kind in (0xA0, 0xD0) and s["drop_aftertouch"]) or (kind == 0xE0 and s["drop_bend"]):
-            return None
+            return []
         if kind == 0xA0 and len(message) == 3:              # poly aftertouch: follows the note
             out = self.note(channel, message[1])
-            return bytes([0xA0 | out[0], out[1], message[2]]) if out else None
+            return [bytes([0xA0 | out[0], out[1], message[2]])] if out else []
         out = self.out_channel(channel)
-        return None if out is None else bytes([kind | out]) + bytes(message[1:])
+        return [] if out is None else [bytes([kind | out]) + bytes(message[1:])]
+
+    # ---- the arpeggiator
+
+    def arp_notes(self):
+        """the notes the arp steps through, [(channel, note, velocity)], in the pattern's order (one cycle)"""
+        notes = []
+        for channel, note, velocity in self.held:
+            for interval in self.shape():
+                notes.append((channel, note + interval, velocity))
+        octaves = max(1, min(4, int(self.s["arp_octaves"])))
+        notes = [(c, n + 12 * o, v) for o in range(octaves) for c, n, v in notes]
+        pattern = self.s["arp"]
+        if pattern == "played":
+            return notes
+        notes = sorted(set(notes), key=lambda x: x[1])
+        if pattern == "down":
+            return notes[::-1]
+        if pattern == "updown":
+            return notes + notes[-2:0:-1]
+        return notes                                        # up, and the pool for random
+
+    def tick(self):
+        """one clock tick (24 a quarter note): the arp's note-offs and note-ons due now"""
+        with self.lock:
+            if not self.arp_active():
+                return []
+            rate = ARP_RATES.get(self.s["arp_rate"], 12)
+            out = []
+            if self.ticks % rate == rate // 2 or not self.held:          # half a step: the note ends
+                out += self.silence()
+            if self.ticks % rate == 0 and self.held:
+                out += self.silence()
+                notes = self.arp_notes()
+                if self.s["arp"] == "random":
+                    import random
+                    channel, note, velocity = random.choice(notes)
+                else:
+                    channel, note, velocity = notes[self.step % len(notes)]
+                self.step += 1
+                mapped = self.note(channel, note)
+                if mapped:
+                    self.sounding = mapped
+                    out.append(bytes([0x90 | mapped[0], mapped[1], self.velocity(velocity)]))
+            self.ticks += 1
+            return out
+
+    def restart(self):
+        """Start: the pattern from its first note, on the next tick"""
+        with self.lock:
+            self.ticks, self.step = 0, 0
+
+    def arp_active(self):
+        return self.s["on"] and self.s["arp_on"]
 
 
 LIBRARY_SYSEX = (bytes([0xF0, 0x7D, 0x46, 0x4C]),   # SLOOP's editor protocol (the box's library)
@@ -613,12 +762,41 @@ class MidiBridge:
         self.usb = UsbMidi(source_match, self.from_usb)
         self.ble_stream = MidiStream()
         self.clock_mode, self.bpm, self.playing = "follow", 120.0, False     # "follow" or "box"
+        self.box_count, self.box_bar = 0, None      # the box clock's ticks since Start, its bar's start
         self.watch = {"FM-1": ClockWatch(), "BT": ClockWatch()}
         self.routes = {key: Route() for key in ROUTES}
+        self.held, self.chan_seen = {}, [0.0] * 16      # for the MIDI meter: notes down, channel traffic
 
     def set_routes(self, routes):
         for key, route in self.routes.items():
-            route.update((routes or {}).get(key))
+            self.deliver(key, route.update((routes or {}).get(key)))
+
+    def deliver(self, key, messages):
+        """messages out of a route, to its destination"""
+        if not messages:
+            return
+        if key.endswith(">FM-1"):
+            if self.enabled and not self.paused:
+                self.usb.send_messages(messages)
+                for m in messages:
+                    self.note_watch(m, time.monotonic())
+        else:
+            for m in messages:
+                self.to_ble(m)
+
+    def arp_tick(self):
+        """a clock tick for the arpeggiators"""
+        for key, route in self.routes.items():
+            if route.arp_active():
+                self.deliver(key, route.tick())
+
+    def arp_restart(self):
+        for route in self.routes.values():
+            route.restart()
+
+    def external_clock(self):
+        now = time.monotonic()
+        return any(watch.bpm(now) for watch in self.watch.values())
 
     def start(self):
         def body():
@@ -640,14 +818,22 @@ class MidiBridge:
         make_realtime()
         due = time.monotonic()
         while True:
-            if self.clock_mode != "box":
+            box = self.clock_mode == "box"
+            # no clock to follow but an arp to play: ticks of our own at the box's tempo, not sent anywhere
+            own = not box and any(r.arp_active() for r in self.routes.values()) and not self.external_clock()
+            if not (box or own):
                 time.sleep(0.05)
                 due = time.monotonic()
                 continue
             now = time.monotonic()
             if due > now:
                 time.sleep(due - now)
-            self.send_all(bytes([CLOCK]))
+            if box:
+                if self.box_count % 96 == 0:
+                    self.box_bar = due
+                self.box_count += 1
+                self.send_all(bytes([CLOCK]))
+            self.arp_tick()
             due += 60.0 / (self.bpm * 24)
             if time.monotonic() - due > 0.1:  # far behind (the CPU was busy): start afresh
                 due = time.monotonic()
@@ -655,6 +841,9 @@ class MidiBridge:
     def transport(self, command):
         """Start or Stop to the FM-1 and Bluetooth"""
         self.playing = command == "start"
+        if self.playing:
+            self.box_count = 0
+            self.arp_restart()
         self.send_all(bytes([START if self.playing else STOP]))
 
     def send_all(self, message):
@@ -667,17 +856,45 @@ class MidiBridge:
     def clock_status(self, now):
         """{"bpm", "source", "playing"} for the screen, or None"""
         if self.clock_mode == "box":
-            return {"bpm": round(self.bpm), "source": "box", "playing": self.playing}
+            return {"bpm": round(self.bpm), "tempo": self.bpm, "source": "box", "playing": self.playing,
+                    "bar": self.box_bar}
         for source, watch in self.watch.items():
             bpm = watch.bpm(now)
             if bpm:
-                return {"bpm": round(bpm), "source": source, "playing": watch.playing}
+                return {"bpm": round(bpm), "tempo": round(bpm, 2), "source": source, "playing": watch.playing,
+                        "bar": round(watch.bar(now), 3)}
         return None
+
+    def note_watch(self, message, now):
+        """notes played to and from the FM-1, and when each channel last carried anything"""
+        status = message[0] if message else 0xF0
+        if status >= 0xF0:
+            return
+        channel, kind = status & 0x0F, status & 0xF0
+        self.chan_seen[channel] = now
+        if kind in (0x80, 0x90) and len(message) == 3:
+            if kind == 0x90 and message[2]:
+                self.held[(channel, message[1])] = now
+            else:
+                self.held.pop((channel, message[1]), None)
+
+    def notes_status(self, now):
+        """(sorted notes held, bit mask of channels busy in the last 0.3 s); a note held over 30 s with no
+        note-off seen is forgotten"""
+        for key in [k for k, t in self.held.items() if now - t > 30]:
+            del self.held[key]
+        chans = sum(1 << ch for ch, t in enumerate(self.chan_seen) if now - t < 0.3)
+        return sorted({note for _, note in self.held})[:24], chans
 
     def passes(self, source, message):
         """Looks at clock on the way; as clock master, keeps other clock and transport to itself."""
         if message and message[0] in TRANSPORT:
             self.watch[source].message(message[0], time.monotonic())
+            if self.clock_mode != "box":      # following: the arps step with the incoming clock
+                if message[0] == CLOCK:
+                    self.arp_tick()
+                elif message[0] == START:
+                    self.arp_restart()
             return self.clock_mode != "box"
         return True
 
@@ -685,9 +902,9 @@ class MidiBridge:
     def from_usb(self, message):
         if is_library_sysex(message) or not self.passes("FM-1", message):
             return
-        message = self.routes["FM-1>BT"].apply(message)
-        if message:
-            self.to_ble(message)
+        self.note_watch(message, time.monotonic())
+        for out in self.routes["FM-1>BT"].apply_all(message):
+            self.to_ble(out)
 
     def to_ble(self, message):
         if not (self.bluez and self.enabled and self.peer):
@@ -715,9 +932,11 @@ class MidiBridge:
         self.last_ble = time.monotonic()
         route = self.routes["BT>FM-1"]
         messages = [out for m in self.ble_stream.feed(strip_timestamps(packet))
-                    if self.passes("BT", m) and (out := route.apply(m))]
+                    if self.passes("BT", m) for out in route.apply_all(m)]
         if self.enabled and not self.paused:
             self.usb.send_messages(messages)
+            for m in messages:
+                self.note_watch(m, self.last_ble)
         log_timing(packet, self.last_ble)
 
     def lookup_name(self):
@@ -759,8 +978,11 @@ def run_child(conn, source_match, enabled):
     """The MIDI process: MidiBridge, sending its status up the pipe when it changes and taking
     ("enabled", bool) and ("pair",) commands. Exits when the app's end of the pipe closes."""
     import os
+    import metronome
     bridge = MidiBridge(source_match, enabled)
     bridge.start()
+    metro = metronome.Metronome(lambda: bridge.clock_status(time.monotonic()), on_start=make_realtime)
+    wanted = [False, None, "mid", 48000]    # the metronome: on, the speaker, the click's level, the rate
 
     def commands():
         while True:
@@ -780,6 +1002,8 @@ def run_child(conn, source_match, enabled):
                 bridge.transport(command[1])
             elif command[0] == "routes":           # ("routes", {route key: settings})
                 bridge.set_routes(command[1])
+            elif command[0] == "metronome":        # ("metronome", on, speaker, level, rate)
+                wanted[:] = command[1:5]
 
     threading.Thread(target=commands, daemon=True).start()
     last, next_poll = None, 0.0
@@ -788,9 +1012,11 @@ def run_child(conn, source_match, enabled):
         if now >= next_poll:
             bridge.poll()
             next_poll = now + (15 if bridge.usb_label() else 3)
+        metro.ensure(*wanted)                  # starts, stops, or restarts it if its stream ended
         status = {"peer": bridge.peer, "error": bridge.error, "usb": bridge.usb_label(),
                   "activity": round(bridge.activity(), 1),  # 0.1 s steps: at most ~5 updates a second
                   "clock": bridge.clock_status(now)}
+        status["notes"], status["chans"] = bridge.notes_status(now)
         if status != last:
             try:
                 conn.send(status)
@@ -815,6 +1041,7 @@ class MidiProcess:
         self.pairing_until = 0.0
         self.usb, self.last_activity = None, 0.0
         self.clock = None                   # {"bpm", "source", "playing"} while there's a clock
+        self.notes, self.chans = [], 0      # for the MIDI meter
 
     def start(self):
         self.proc.start()
@@ -830,6 +1057,7 @@ class MidiProcess:
             self.peer, self.error = status["peer"], status["error"]
             self.usb, self.last_activity = status["usb"], status["activity"]
             self.clock = status.get("clock")
+            self.notes, self.chans = status.get("notes") or [], status.get("chans", 0)
 
     def poll(self):
         pass                                # the MIDI process watches the USB side itself
@@ -859,3 +1087,6 @@ class MidiProcess:
 
     def set_routes(self, routes):
         self.conn.send(("routes", routes))
+
+    def set_metronome(self, on, target, level, rate):
+        self.conn.send(("metronome", on, target, level, rate))

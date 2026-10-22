@@ -5,14 +5,19 @@ its channels, transpose, velocity curve and what to drop. The routing itself run
   Settings > MIDI routes:  the grid; joystick moves, press opens a route, left from the first column: back
   a route's page:          up/down rows; press changes (on/off), or starts editing (up/down, then press/left)
   Channels > custom:       16 rows, input channel -> output channel or off
+  Settings > MIDI > Route presets: four slots; press: Load / Save here / Clear
 """
 import json
+import time
 
 import blemidi
 
 SOURCE_NAMES = {"BT": "Bluetooth", "FM-1": "FM-1", "Box": "Box clock"}
 VELOCITY = ["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
 CHANNELS = ["same"] + list(range(16)) + ["custom"]      # all to one channel (0-15), or a table
+CYCLES = {"chord": list(blemidi.CHORDS), "arp": list(blemidi.ARPS), "arp_rate": list(blemidi.ARP_RATES),
+          "arp_octaves": [1, 2, 3]}                     # route rows whose value steps through a list
+PRESETS = ("1", "2", "3", "4")
 
 
 class MidiScreens:
@@ -20,6 +25,7 @@ class MidiScreens:
         self.mx = [0, 0]                      # matrix cursor: source row, destination column
         self.route_key, self.route_row, self.route_edit = None, 0, None
         self.chan_row, self.chan_edit = 0, False
+        self.preset_row, self.preset_menu = 0, None     # Route presets: the slot, and its actions while open
 
     # ---- state
 
@@ -31,8 +37,11 @@ class MidiScreens:
         return self.routes()[self.route_key]
 
     def set_route(self, **changes):
+        self.set_route_of(self.route_key, **changes)
+
+    def set_route_of(self, key, **changes):
         routes = self.routes()
-        routes[self.route_key].update(changes)
+        routes[key].update(changes)
         self.state["routes"] = routes
         self.save_settings()
         if self.midi:
@@ -45,10 +54,66 @@ class MidiScreens:
     def open_matrix(self):
         self.screen = "matrix"
 
+    def keys_route(self):
+        """the keyboard's route: Bluetooth to the FM-1 (what Settings > MIDI's Arp and Chord switch)"""
+        return self.routes()["BT>FM-1"]
+
+    def toggle_keys(self, name):
+        on = not self.keys_route()[name]
+        self.set_route_of("BT>FM-1", **{name: on})
+        r = self.keys_route()
+        what = f"Arp {r['arp']} {r['arp_rate']}" if name == "arp_on" else f"Chord {r['chord']}"
+        self.say(f"{what}: {'on' if on else 'off'}", 1.5)
+
+    def open_presets(self):
+        self.screen, self.preset_row, self.preset_menu = "presets", 0, None
+
+    def presets(self):
+        return self.state.get("route_presets") or {}
+
+    def preset_actions(self):
+        saved = PRESETS[self.preset_row] in self.presets()
+        return (["Load"] if saved else []) + ["Save here"] + (["Clear"] if saved else [])
+
+    def preset_do(self, action):
+        slot, presets = PRESETS[self.preset_row], dict(self.presets())
+        if action == "Load":
+            self.state["routes"] = json.loads(json.dumps(presets[slot]["routes"]))
+            if self.midi:
+                self.midi.set_routes(self.routes())
+            self.say(f"Loaded preset {slot}")
+        elif action == "Save here":
+            presets[slot] = {"routes": self.routes(), "saved": time.time()}
+            self.say(f"Saved as preset {slot}")
+        elif action == "Clear":
+            presets.pop(slot, None)
+            self.say(f"Preset {slot} cleared")
+        if action != "Load":
+            self.state["route_presets"] = presets
+        self.save_settings()
+        self.preset_menu = None
+
     # ---- keys
 
     def midi_key(self, key, held):
         """True if a MIDI matrix screen took the key"""
+        if self.screen == "presets":
+            if self.preset_menu is not None:  # Load / Save here / Clear for the chosen slot
+                actions = self.preset_actions()
+                if key in ("up", "down"):
+                    self.preset_menu = (self.preset_menu + (1 if key == "down" else -1)) % len(actions)
+                elif key in ("press", "right") and not held:
+                    self.preset_do(actions[self.preset_menu])
+                elif key == "left":
+                    self.preset_menu = None
+                return True
+            if key in ("up", "down"):
+                self.preset_row = (self.preset_row + (1 if key == "down" else -1)) % len(PRESETS)
+            elif key in ("press", "right") and not held:
+                self.preset_menu = 0
+            elif key == "left":
+                self.screen = "settings"
+            return True
         if self.screen == "matrix":
             if key in ("up", "down"):
                 self.mx[0] = (self.mx[0] + (1 if key == "down" else -1)) % len(blemidi.SOURCES)
@@ -80,7 +145,7 @@ class MidiScreens:
                 self.screen = "matrix"
             elif key in ("press", "right") and not held:
                 name = rows[self.route_row][0]
-                if name in ("on", "drop_clock", "drop_aftertouch", "drop_bend"):
+                if name in ("on", "drop_clock", "drop_aftertouch", "drop_bend", "chord_on", "arp_on"):
                     self.set_route(**{name: not self.route()[name]})
                 elif name == "channels" and isinstance(self.route()["channels"], list):
                     self.chan_row, self.chan_edit, self.screen = 0, False, "chanmap"
@@ -109,7 +174,11 @@ class MidiScreens:
 
     def route_adjust(self, name, step):
         r = self.route()
-        if name == "transpose":
+        if name in CYCLES:
+            options = CYCLES[name]
+            now = r[name] if r[name] in options else options[0]
+            self.set_route(**{name: options[(options.index(now) + step) % len(options)]})
+        elif name == "transpose":
             self.set_route(transpose=max(-24, min(24, r["transpose"] + step)))
         elif name == "velocity":
             now = f"fixed {r['fixed']}" if r["velocity"] == "fixed" else r["velocity"]
@@ -140,7 +209,14 @@ class MidiScreens:
             rows += [("channels", "Channels", channels), ("transpose", "Transpose", f"{r['transpose']:+d}" if r["transpose"] else "0"),
                      ("velocity", "Velocity", velocity), ("drop_clock", "Drop clock", onoff(r["drop_clock"])),
                      ("drop_aftertouch", "Drop aftert.", onoff(r["drop_aftertouch"])),
-                     ("drop_bend", "Drop bend", onoff(r["drop_bend"]))]
+                     ("drop_bend", "Drop bend", onoff(r["drop_bend"])),
+                     ("chord_on", "Chord", onoff(r["chord_on"]))]
+            if r["chord_on"]:
+                rows += [("chord", "Chord type", r["chord"])]
+            rows += [("arp_on", "Arp", onoff(r["arp_on"]))]
+            if r["arp_on"]:
+                rows += [("arp", "Arp pattern", r["arp"]), ("arp_rate", "Arp rate", r["arp_rate"]),
+                         ("arp_octaves", "Arp octaves", str(r["arp_octaves"]))]
         return rows
 
     def route_title(self):
@@ -148,10 +224,11 @@ class MidiScreens:
         return f"{'Box' if source == 'Box' else source} > {dest}"
 
     def midi_view(self):
-        if self.screen not in ("matrix", "route", "chanmap"):
+        if self.screen not in ("matrix", "route", "chanmap", "presets"):
             return None
         return (tuple(self.mx), self.route_key, self.route_row, self.route_edit, self.chan_row, self.chan_edit,
-                json.dumps(self.state.get("routes"), sort_keys=True))
+                self.preset_row, self.preset_menu, json.dumps(self.state.get("routes"), sort_keys=True),
+                json.dumps(self.presets(), sort_keys=True))
 
     # ---- drawing
 
@@ -198,6 +275,20 @@ class MidiScreens:
         rows = [(label, value) for _, label, value in self.route_rows()]
         hint = "up/down = value  < done" if self.route_edit else "press = change   < back"
         self.draw_rows(d, self.route_title(), rows, self.route_row, bool(self.route_edit), hint)
+
+    def draw_presets(self, d):
+        if self.preset_menu is not None:
+            actions = self.preset_actions()
+            self.draw_rows(d, f"Preset {PRESETS[self.preset_row]}", [(a, "") for a in actions], self.preset_menu,
+                           False, "press = do it   < back")
+            return
+        presets = self.presets()
+        rows = []
+        for slot in PRESETS:
+            saved = presets.get(slot)
+            when = time.strftime("%m-%d %H:%M", time.localtime(saved["saved"])) if saved else "empty"
+            rows.append((f"Preset {slot}", when))
+        self.draw_rows(d, "Route presets", rows, self.preset_row, False, "press = load/save  < back")
 
     def draw_chanmap(self, d):
         table = self.route()["channels"]

@@ -18,12 +18,22 @@ from PIL import Image, ImageDraw
 
 import library
 
-METERS = ("Bars", "VU", "Spectrum", "Scope", "Tape")
+METERS = ("Bars", "VU", "Spectrum", "Scope", "Tape", "Tuner", "MIDI", "Waterfall", "Stereo", "History", "Beat")
+NO_AUDIO = ("MIDI", "Beat")             # meters drawn from MIDI alone: no audio stream while they show
 RATE, BLOCK = 16000, 512                # frames per second and per read (32 ms)
 FULL = 32768.0
 FLOOR = -60.0                           # dBFS shown as nothing
 VU_REF = -18.0                          # dBFS (RMS) that reads 0 VU, the usual digital alignment
 SPECTRUM_N = 512                        # frames per spectrum: 31 Hz bins at 16 kHz
+RECENT_N = 2048                         # frames kept for the spectrum, scope and tuner (128 ms)
+NOTE_NAMES = ("C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B")
+CHORDS = ((frozenset({0, 4, 7}), ""), (frozenset({0, 3, 7}), "m"), (frozenset({0, 4, 7, 10}), "7"),
+          (frozenset({0, 4, 7, 11}), "maj7"), (frozenset({0, 3, 7, 10}), "m7"), (frozenset({0, 3, 6}), "dim"),
+          (frozenset({0, 4, 8}), "aug"), (frozenset({0, 2, 7}), "sus2"), (frozenset({0, 5, 7}), "sus4"),
+          (frozenset({0, 7}), "5"))
+WHITE = (0, 2, 4, 5, 7, 9, 11)          # the white keys' places in an octave
+BAYER = ((0, 8, 2, 10), (12, 4, 14, 6), (3, 11, 1, 9), (15, 7, 13, 5))   # 4x4 ordered dither: grey on 1 bit
+HISTORY_STEP = 0.4                      # seconds per column of the History meter: 128 columns = 51 s
 BAND_EDGES = (50, 7500)                 # Hz: 16 bands evenly spaced in pitch between these
 MIN_FREE = 200 * 1024 * 1024            # bytes left on the SD card: recording stops below this
 TAPE_SECONDS = 30 * 60                  # the Tape meter's reel: a full side every 30 minutes
@@ -75,7 +85,47 @@ def levels(samples):
     return peaks, rms
 
 
-_BANDS = None
+_BANDS, _WF = None, None
+
+
+def waterfall_bins():
+    """64 bands for the Waterfall (2 pixels each), from 50 Hz to 7.5 kHz, at least one FFT bin each"""
+    global _WF
+    if _WF is None:
+        hz, (lo, hi) = RATE / SPECTRUM_N, BAND_EDGES
+        starts, last = [], 0
+        for i in range(65):
+            k = max(last + 1, int(round(lo * (hi / lo) ** (i / 64) / hz)))
+            starts.append(k)
+            last = k
+        _WF = starts
+    return _WF
+
+
+def spectrum_bins(samples, edges):
+    """dBFS per band (FFT bins edges[i] .. edges[i+1]) for the newest SPECTRUM_N frames, L and R summed"""
+    global _window
+    np = _np
+    if len(samples) < SPECTRUM_N:
+        return np.full(len(edges) - 1, FLOOR - 20.0)
+    if _window is None:
+        _window = np.hanning(SPECTRUM_N).astype(np.float32)
+    tail = samples[-SPECTRUM_N:]
+    f = np.fft.rfft((tail[:, 0].astype(np.float32) + tail[:, 1]) * _window)
+    power = f.real ** 2 + f.imag ** 2
+    bands = np.add.reduceat(power[:edges[-1]], edges[:-1])
+    scale = (2 * FULL * SPECTRUM_N / 4) ** 2
+    return 10 * np.log10(np.maximum(bands, 1e-12) / scale)
+
+
+def correlation(samples):
+    """-1 (out of phase) .. 0 (unrelated) .. +1 (mono) for (n, 2) samples; 0 for silence"""
+    np = _np
+    if not len(samples):
+        return 0.0
+    x = samples.astype(np.float32)
+    lr, ll, rr = float(np.dot(x[:, 0], x[:, 1])), float(np.dot(x[:, 0], x[:, 0])), float(np.dot(x[:, 1], x[:, 1]))
+    return lr / math.sqrt(ll * rr) if ll > 0 and rr > 0 else 0.0
 
 
 def band_bins():
@@ -95,19 +145,65 @@ def band_bins():
 
 def spectrum(samples):
     """dBFS of each of the 16 bands for the newest SPECTRUM_N frames (L and R summed)"""
-    global _window
-    np = _np
     if len(samples) < SPECTRUM_N:
         return [FLOOR] * 16
-    if _window is None:
-        _window = np.hanning(SPECTRUM_N).astype(np.float32)
-    tail = samples[-SPECTRUM_N:]
-    f = np.fft.rfft((tail[:, 0].astype(np.float32) + tail[:, 1]) * _window)
-    power = f.real ** 2 + f.imag ** 2
-    edges = band_bins()
-    bands = np.add.reduceat(power[:edges[-1]], edges[:-1])
-    scale = (2 * FULL * SPECTRUM_N / 4) ** 2      # a full-scale sine in both channels, Hann window
-    return (10 * np.log10(np.maximum(bands, 1e-12) / scale)).tolist()
+    return spectrum_bins(samples, band_bins()).tolist()
+
+
+def pitch(x, rate, lo=40.0, hi=2000.0):
+    """(Hz, clarity 0..1) of mono samples by autocorrelation, or (None, clarity) without a clear pitch.
+    Takes the first strong peak (not the highest), so it doesn't jump an octave down."""
+    np = _np
+    x = np.asarray(x, dtype=np.float32)
+    x = x - x.mean()
+    n = len(x)
+    if n < 64:
+        return None, 0.0
+    size = 1 << (2 * n - 1).bit_length()
+    f = np.fft.rfft(x, size)
+    r = np.fft.irfft(f.real * f.real + f.imag * f.imag, size)[:n]
+    if r[0] <= 0:
+        return None, 0.0
+    r = r / r[0] * n / (n - np.arange(n))      # unbiased: longer lags overlap less
+    kmin, kmax = max(2, int(rate / hi)), min(int(rate / lo), n // 2)
+    if kmax <= kmin + 2:
+        return None, 0.0
+    seg = r[kmin:kmax]
+    peaks = np.nonzero((seg[1:-1] > seg[:-2]) & (seg[1:-1] >= seg[2:]))[0] + 1
+    if not len(peaks):
+        return None, 0.0
+    best = seg[peaks].max()
+    k = int(peaks[np.nonzero(seg[peaks] >= 0.9 * best)[0][0]])
+    a, b, c = seg[k - 1], seg[k], seg[k + 1]
+    shift = 0.5 * (a - c) / (a - 2 * b + c) if a - 2 * b + c else 0.0
+    clarity = float(min(1.0, b))
+    return (rate / (kmin + k + shift), clarity) if clarity > 0.5 else (None, clarity)
+
+
+def note_of(freq, a4=440.0):
+    """Hz -> ("A", 4, cents off, MIDI note)"""
+    midi = 69 + 12 * math.log2(freq / a4)
+    near = int(round(midi))
+    return NOTE_NAMES[near % 12], near // 12 - 1, (midi - near) * 100, near
+
+
+def note_name(note):
+    return f"{NOTE_NAMES[note % 12]}{note // 12 - 1}"
+
+
+def chord_name(notes):
+    """"Cm7", "G", "D5"... for held MIDI notes; one note: its name; nothing recognised: None"""
+    if not notes:
+        return None
+    if len(set(notes)) == 1:
+        return note_name(notes[0])
+    classes = {n % 12 for n in notes}
+    for root in sorted(classes, key=lambda c: (c - min(notes)) % 12):    # the bass note first
+        shape = frozenset((c - root) % 12 for c in classes)
+        for template, suffix in CHORDS:
+            if shape == template:
+                return NOTE_NAMES[root] + suffix
+    return None
 
 
 class LevelReader:
@@ -140,11 +236,11 @@ class LevelReader:
             with self.lock:
                 self.pending += data
                 del self.pending[:-RATE * 4]                    # at most a second if nobody takes it
-                self.recent = (self.recent + data)[-SPECTRUM_N * 4:]
+                self.recent = (self.recent + data)[-RECENT_N * 4:]
                 self.seq += 1
 
     def take(self):
-        """(samples since the last take, the newest SPECTRUM_N samples), each an (n, 2) array"""
+        """(samples since the last take, the newest RECENT_N samples), each an (n, 2) array"""
         with self.lock:
             pending, recent = bytes(self.pending), self.recent
             self.pending.clear()
@@ -204,6 +300,40 @@ class Recorder:
         return path, seconds
 
 
+class Player:
+    """pw-play: a recording to the speaker, mixed with the FM-1's live sound by PipeWire."""
+
+    def __init__(self):
+        self.proc, self.path, self.started, self.length = None, None, 0.0, 0.0
+
+    def start(self, target, path):
+        self.stop()
+        try:
+            self.proc = subprocess.Popen(["pw-play", "--target", target, str(path)],
+                                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            self.proc = None
+            return False
+        self.path, self.started = path, time.monotonic()
+        self.length = max(0, path.stat().st_size - 44) / 192000          # 48 kHz 16-bit stereo
+        return True
+
+    def playing(self):
+        return self.proc is not None and self.proc.poll() is None
+
+    def seconds(self, now=None):
+        return min(self.length, (now or time.monotonic()) - self.started) if self.proc else 0.0
+
+    def stop(self):
+        if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(3)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+        self.proc = None
+
+
 def clock(seconds):
     """1:05 or 1:02:05"""
     seconds = int(seconds)
@@ -231,6 +361,11 @@ class MeterScreens:
         self.m_bands = [FLOOR] * 16
         self.m_caps = [FLOOR] * 16
         self.m_reels = [0.0, 0.0]                       # Tape: the reels' angles (radians)
+        self.m_tune = None                              # Tuner: [note, octave, cents, Hz, when last heard]
+        self.m_base = 48                                # MIDI: the keyboard's lowest C (C3)
+        self.m_wf = None                                # Waterfall: the picture so far (rows x 128, bool)
+        self.m_corr = 0.0                               # Stereo: correlation, smoothed
+        self.m_hist, self.m_hacc, self.m_hnext = [], FLOOR, 0.0   # History: dB per column, this column, its end
 
     def meter_index(self):
         return self.state.get("meter", 0) % len(METERS)
@@ -299,6 +434,17 @@ class MeterScreens:
         """Part of App.view(): keeps the reader running while the meters show, and watches a recording;
         changes with each block, and each second of a recording."""
         rec = self.recording_tick(now)
+        style = METERS[self.meter_index()]
+        if self.screen == "meter" and style in NO_AUDIO:                    # no audio needed: MIDI only
+            if self.levels.proc:
+                self.levels.stop()
+            midi = self.midi
+            if style == "Beat":               # redraw 8 times a beat
+                clock = getattr(midi, "clock", None)
+                step = int(beat_position(clock, now) * 8) if clock else None
+                return (self.meter_index(), clock and clock.get("bpm"), step), rec
+            return (self.meter_index(), tuple(getattr(midi, "notes", ()) or ()),
+                    getattr(midi, "chans", 0)), rec
         want = (self.screen == "meter" and self.mode != "saver" and self.source and numpy()
                 and self.source["name"])
         if not want:
@@ -316,7 +462,14 @@ class MeterScreens:
         """The whole meter frame (render() puts message boxes on top)."""
         style = METERS[self.meter_index()]
         img = self.meter_background(style).copy()
+        self.m_frame = img                    # for meters that paste a picture (the Waterfall)
         d = ImageDraw.Draw(img)
+        if style == "MIDI":
+            self.draw_midi(d, now)
+            return img
+        if style == "Beat":
+            self.draw_beat(d, now)
+            return img
         problem = ("FM-1 not found" if not self.source else None if numpy() else
                    "Needs python3-numpy" if _np_state == "missing" else "Loading meters...")
         if problem:
@@ -331,7 +484,9 @@ class MeterScreens:
             if self.mode == "dim":
                 self.wake()
         {"Bars": self.draw_bars, "VU": self.draw_vu, "Spectrum": self.draw_spectrum,
-         "Scope": self.draw_scope, "Tape": self.draw_tape}[style](d, now, dt, peak, rms, recent)
+         "Scope": self.draw_scope, "Tape": self.draw_tape, "Tuner": self.draw_tuner,
+         "Waterfall": self.draw_waterfall, "Stereo": self.draw_stereo, "History": self.draw_history}[style](
+            d, now, dt, peak, rms, recent)
         if self.recorder.recording():         # REC and the time over the title, the dot blinking
             seconds = self.recorder.seconds(now)
             text = f"REC {clock(seconds)}"
@@ -373,6 +528,24 @@ class MeterScreens:
             d.line((5, 58, 122, 58), fill=1)
             d.rectangle((57, 52, 70, 58), fill=1)                       # the record head
             d.ellipse((80, 54, 84, 58), fill=1)                         # capstan
+        elif style == "Stereo":               # the L and R axes (diagonals), the correlation scale
+            for k in range(0, 23, 3):
+                d.point((64 - k, 32 - k), fill=1)
+                d.point((64 + k, 32 - k), fill=1)
+            d.text((36, 9), "L", font=self.f_small, fill=1)
+            d.text((88, 9), "R", font=self.f_small, fill=1)
+            d.line((24, 58, 104, 58), fill=1)
+            for x in (24, 64, 104):
+                d.line((x, 56, x, 60), fill=1)
+            d.text((10, 53), "-1", font=self.f_small, fill=1)
+            d.text((108, 53), "+1", font=self.f_small, fill=1)
+        elif style == "Tuner":                # the cents scale: -50 .. +50
+            d.line((14, 56, 114, 56), fill=1)
+            for c in (-50, -25, 0, 25, 50):
+                x = 64 + c
+                d.line((x, 53 if c else 50, x, 59 if c else 62), fill=1)
+            d.text((2, 50), "b", font=self.f_small, fill=1)
+            d.text((119, 50), "#", font=self.f_small, fill=1)
         self.meter_bg[style] = img
         return img
 
@@ -455,6 +628,163 @@ class MeterScreens:
             h = int(round(32 * (max(-48.0, min(0.0, db(peak[ch]))) + 48) / 48))
             if h:
                 d.rectangle((x, 46 - h, x + 4, 46), fill=1)
+
+
+    def draw_tuner(self, d, now, dt, peak, rms, recent):
+        """The note being played, big, its frequency, and how far off in cents (a pointer over -50..+50)."""
+        if len(recent) >= 256 and max(peak) > FULL * 0.01:                 # above -40 dBFS
+            x = recent[-1024:].astype(_np.float32).mean(axis=1)              # 64 ms: E1 and up
+            freq, _ = pitch(x, RATE, hi=2500.0)
+            if freq:
+                name, octave, cents, _ = note_of(freq)
+                if self.m_tune and self.m_tune[:2] == [name, octave]:
+                    cents = self.m_tune[2] + (cents - self.m_tune[2]) * min(1.0, dt * 6)   # steady pointer
+                self.m_tune = [name, octave, cents, freq, now]
+        if not self.m_tune or now - self.m_tune[4] > 1.5:                   # nothing heard for a moment
+            d.text((52, 20), "- -", font=self.f_big, fill=1)
+            return
+        name, octave, cents, freq = self.m_tune[:4]
+        text = f"{name}{octave}"
+        w = d.textlength(text, font=self.f_big)
+        in_tune = abs(cents) < 5
+        if in_tune:                           # in tune: the note in a box
+            d.rectangle((60 - w / 2, 14, 68 + w / 2, 44), outline=1)
+        d.text((64 - w / 2, 15), text, font=self.f_big, fill=1)
+        hz = f"{freq:.1f} Hz"
+        d.text((127 - d.textlength(hz, font=self.f_small), 40), hz, font=self.f_small, fill=1)
+        c = f"{cents:+.0f}"
+        d.text((0, 40), c, font=self.f_small, fill=1)
+        x = 64 + max(-50, min(50, int(round(cents))))
+        d.polygon(((x - 3, 47), (x + 3, 47), (x, 53)), fill=1)
+
+    def draw_midi(self, d, now):
+        """A three-octave keyboard lighting the notes played (to and from the FM-1), the chord's name, and
+        which of the 16 channels have traffic."""
+        midi = self.midi
+        notes = sorted(getattr(midi, "notes", ()) or ())
+        chans = getattr(midi, "chans", 0) if midi else 0
+        if notes or chans:
+            self.last_activity = now          # playing keeps the screen on, as sound does
+            if self.mode == "dim":
+                self.wake()
+        if notes and not (self.m_base <= notes[0] and notes[-1] < self.m_base + 36):
+            self.m_base = max(0, min(84, 12 * (notes[0] // 12)))          # follow the hands, an octave at a time
+        chord = chord_name(notes)
+        line = "  ".join(x for x in (chord, " ".join(note_name(n) for n in notes[:4])) if x) if notes else \
+            ("no MIDI" if not midi else "")
+        d.text((0, 10), line, font=self.f_small, fill=1)
+        held, top, left = set(notes), 22, 1
+        for i in range(21):                   # white keys
+            note = self.m_base + 12 * (i // 7) + WHITE[i % 7]
+            x = left + i * 6
+            d.rectangle((x, top, x + 5, top + 26), fill=1 if note in held else 0, outline=1)
+        for i in range(21):                   # black keys, over the gaps after C, D, F, G and A
+            if WHITE[i % 7] in (4, 11) or i == 20:
+                continue
+            note = self.m_base + 12 * (i // 7) + WHITE[i % 7] + 1
+            x = left + i * 6 + 4
+            if note in held:
+                d.rectangle((x, top, x + 3, top + 15), fill=0, outline=1)
+                d.point((x + 1, top + 12), fill=1)
+                d.point((x + 2, top + 12), fill=1)
+            else:
+                d.rectangle((x, top, x + 3, top + 15), fill=1)
+        d.text((left, top + 27), note_name(self.m_base), font=self.f_small, fill=1)
+        for ch in range(16):                  # the 16 channels
+            x = 40 + ch * 5 + (ch // 4) * 2
+            if chans & (1 << ch):
+                d.rectangle((x, 54, x + 3, 62), fill=1)
+            else:
+                d.rectangle((x, 61, x + 3, 62), fill=1)
+
+
+    def draw_waterfall(self, d, now, dt, peak, rms, recent):
+        """A scrolling spectrogram: each frame adds a row at the top (64 bands, 2 pixels each, grey as dither
+        density), the older rows move down. ~5 s of history."""
+        np = _np
+        rows = 53
+        if self.m_wf is None:
+            self.m_wf = np.zeros((rows, 128), dtype=bool)
+        if len(recent) >= SPECTRUM_N:
+            level = np.clip((spectrum_bins(recent, waterfall_bins()) - FLOOR) / -FLOOR, 0, 1)
+            self.m_wf = np.roll(self.m_wf, 1, axis=0)
+            row = np.repeat(level, 2) * 16
+            self.m_wf[0] = row > np.array(BAYER[int(now * 10) % 4] * 32)
+        self.m_frame.paste(Image.fromarray((self.m_wf * 255).astype(np.uint8)).convert("1"), (0, 11))
+
+    def draw_stereo(self, d, now, dt, peak, rms, recent):
+        """A goniometer: mono is a vertical line, wide stereo a cloud, out of phase a horizontal line; the
+        correlation below, -1 .. +1."""
+        np = _np
+        if len(recent) < 8:
+            return
+        x = recent[-512::2].astype(np.float32)
+        mid, side = (x[:, 0] + x[:, 1]) / 2, (x[:, 0] - x[:, 1]) / 2
+        gain = 21 / max(float(np.abs(mid).max()), float(np.abs(side).max()), 300.0)      # fills the circle
+        xs, ys = (64 + side * gain).tolist(), (32 - mid * gain).tolist()
+        d.point(list(zip(xs, ys)), fill=1)
+        self.m_corr += (correlation(recent) - self.m_corr) * min(1.0, dt * 4)
+        cx = 64 + int(round(40 * max(-1.0, min(1.0, self.m_corr))))
+        d.polygon(((cx - 3, 51), (cx + 3, 51), (cx, 56)), fill=1)
+
+    def draw_history(self, d, now, dt, peak, rms, recent):
+        """The peak level over the last ~51 s, one column per 0.4 s, newest on the right."""
+        self.m_hacc = max(self.m_hacc, db(max(peak)))
+        if now >= self.m_hnext:
+            self.m_hist = (self.m_hist + [self.m_hacc])[-128:]
+            self.m_hacc, self.m_hnext = FLOOR, now + HISTORY_STEP
+        x0 = 128 - len(self.m_hist)
+        for i, level in enumerate(self.m_hist):
+            if level > -48:
+                d.line((x0 + i, history_y(level), x0 + i, 63), fill=1)
+        for level in (-12, -24, -36):         # the dB lines on top, inverted where the graph is filled
+            y = history_y(level)
+            for x in range(0, 112, 4):
+                d.point((x, y), fill=0 if self.m_frame.getpixel((x, y)) else 1)
+            label = str(level)
+            w = d.textlength(label, font=self.f_small)
+            d.rectangle((126 - w, y - 9, 127, y), fill=0)
+            d.text((128 - w, y - 9), label, font=self.f_small, fill=1)
+
+    def draw_beat(self, d, now):
+        """The tempo, big, and four beat boxes lighting in time; the bar starts again on Start."""
+        clock = getattr(self.midi, "clock", None) if self.midi else None
+        if not clock:                         # following, and nothing sends clock: say how to get one
+            for y, text, f in ((16, "No clock coming in", self.f_body), (34, "Tap tempo on the home", self.f_small),
+                               (44, "screen, or Settings >", self.f_small), (54, "Clock > Clock: box", self.f_small)):
+                d.text(((128 - d.textlength(text, font=f)) / 2, y), text, font=f, fill=1)
+            return
+        self.last_activity = now
+        position = beat_position(clock, now)
+        beat, flash = int(position) % 4, position % 1 < 0.15
+        text = str(clock["bpm"])
+        w = d.textlength(text, font=self.f_big)
+        if flash:                             # the beat: the number flashes
+            d.rectangle((60 - w / 2, 12, 68 + w / 2, 42), fill=1)
+        d.text((64 - w / 2, 13), text, font=self.f_big, fill=0 if flash else 1)
+        source = {"box": "box", "FM-1": "FM-1", "BT": "BT"}.get(clock.get("source"), "")
+        d.text((0, 30), "BPM", font=self.f_small, fill=1)
+        d.text((128 - d.textlength(source, font=self.f_small), 30), source, font=self.f_small, fill=1)
+        for i in range(4):
+            x = 8 + i * 30
+            top = 46 if i == 0 else 49        # beat 1 is the big one
+            if i == beat:
+                d.rectangle((x, top, x + 22, 62), fill=1)
+            else:
+                d.rectangle((x, top, x + 22, 62), outline=1)
+        if clock.get("playing"):
+            d.text((0, 10), "▶", font=self.f_small, fill=1)
+
+
+def beat_position(clock, now):
+    """beats since the bar began (0 .. 4 and on), from the clock's tempo and the time its bar began"""
+    bar = clock.get("bar") or now
+    return max(0.0, (now - bar) * (clock.get("tempo") or clock["bpm"]) / 60.0)
+
+
+def history_y(level):
+    """the History meter's y for a level in dBFS: -48 at the bottom (y 63), 0 at y 12"""
+    return int(round(63 - 51 * (max(-48.0, min(0.0, level)) + 48) / 48))
 
 
 def bar_x(level):

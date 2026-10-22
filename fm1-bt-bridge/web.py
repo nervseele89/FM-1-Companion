@@ -203,6 +203,13 @@ class Handler(BaseHTTPRequestHandler):
             name = name or paths[0].stem[:8]
             library.ask_box(["load-sample", str(slot), name, *map(str, paths)], "Load sample?",
                             [f"{name} ({len(paths)} file{'s' if len(paths) > 1 else ''})", f"into USR{slot}"])
+        elif command == "load-recording":
+            path, slot = safe_path("recordings", r.get("file")), r.get("slot")
+            if not path or not path.is_file() or slot not in (1, 2, 3, 4):
+                return self.fail("pick a recording and a slot")
+            label = "REC" + (path.stem.split("_")[1][:4] if path.stem.count("_") >= 2 else "")
+            library.ask_box(["load-recording", str(slot), label, str(path)], "Load recording?",
+                            [f"{path.stem[:20]}: first 7 s", f"into USR{slot}"])
         elif command == "flash":
             path = safe_path("firmware", r.get("file"))
             if not path or not path.is_file():
@@ -258,7 +265,7 @@ label.file{display:inline-block}label.file input{display:none}
 <section><h2>Firmware</h2><p class="meta" style="margin:0 0 6px">SLOOP (groovebox) and Clipper (synthesizer, experimental) are both isod89's, based on Felucca. Backups, projects and samples belong to the firmware they came from: a SLOOP backup can't be restored onto Clipper, and Clipper has wavetables instead of sample slots.</p><div id="firmware"></div>
 <div class="row" style="margin-top:8px"><label class="file"><input type="file" accept=".fwsc" onchange="upload('firmware',this)"><button onclick="this.previousElementSibling.click()">Upload a .fwsc…</button></label></div></section>
 
-<section><h2>Recordings</h2><p class="meta" style="margin:0 0 6px">What the box recorded from the FM-1 (48 kHz WAV): on the box, open the meters (joystick left) and press to start and stop.</p>
+<section><h2>Recordings</h2><p class="meta" style="margin:0 0 6px">What the box recorded from the FM-1 (48 kHz WAV): on the box, open the meters (joystick left) and press to start and stop. <i>Load into slot</i> resamples a take into the FM-1: its first 7 seconds of sound, with the note it plays as the root.</p>
 <div id="recordings"></div></section>
 
 <p class="meta">Anything that writes to the FM-1 asks for a confirmation on the box: hold the joystick press for 2 seconds. A backup is made first.</p>
@@ -316,9 +323,11 @@ function render() {
     : `<p class="empty">No firmware yet: Get SLOOP update or Get Clipper, or upload a .fwsc.</p>`;
 }
 function renderRecordings() {
-  $("recordings").innerHTML = lib.recordings.length ? lib.recordings.map((r) => `<div class="item"><div><div class="name">${when(r.date)}</div>
+  $("recordings").innerHTML = lib.recordings.length ? lib.recordings.map((r, i) => `<div class="item"><div><div class="name">${when(r.date)}</div>
     <div class="meta">${mins(r.seconds)} · ${(r.bytes / 1048576).toFixed(1)} MB · ${esc(r.name)}</div></div>
     <div class="row"><a href="/files/recordings/${encodeURIComponent(r.name)}" download><button>Download</button></a>
+    <select id="rs${i}">${[1,2,3,4].map((n) => `<option value="${n}">USR${n}</option>`).join("")}</select>
+    <button onclick="ask({cmd:'load-recording', file:${q(r.name)}, slot:+$('rs${i}').value})">Load into slot…</button>
     <button onclick="del('recordings',${q(r.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No recordings yet: on the box, open the meters (joystick left) and press to record.</p>`;
 }

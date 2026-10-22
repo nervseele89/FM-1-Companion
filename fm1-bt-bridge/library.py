@@ -10,6 +10,9 @@
                                       a backup's project as its own file in ~/fm1-library/projects
   library.py load-sample SLOT NAME WAV...
                                       WAV files into USR SLOT (1-4), one zone each (backs up first)
+  library.py load-recording SLOT NAME FILE
+                                      a recording into USR SLOT: trimmed to its first 7.3 s of sound, its note
+                                      detected for the root, kept in samples as rec-TIME_NOTE.wav (backs up first)
   library.py flash FILE.fwsc          install a firmware package (backs up first when it can)
   library.py fetch sloop|clipper      download the newest SLOOP or Clipper release into ~/fm1-library/firmware
                                       (fetch-sloop: the same as fetch sloop)
@@ -308,10 +311,58 @@ def job_save_project(file, source, name):
     return path
 
 
-def job_load_sample(slot, name, wavs):
+SLOT_SECONDS = 7.3                      # a sample slot holds ~7.4 s at 22,050 Hz
+SILENCE = 32768 * 10 ** (-45 / 20)      # -45 dBFS: quieter than this is the silence around a take
+
+
+def sample_from_recording(recording, seconds=SLOT_SECONDS):
+    """A recording -> a sample WAV in the library (mono, 22,050 Hz, 16 bit), ready for a slot: from the first
+    sound for up to `seconds`, silence at the end cut, a 10 ms fade-out, the note it plays detected and put in
+    the name (rec-HHMMSS_A3.wav) so SLOOP plays it in tune. numpy does the work: SLOOP's pure-Python resampler
+    takes minutes over a 48 kHz recording on a Zero W."""
+    import wave
+    import numpy as np
+    import meters
+    meters.load_numpy()
+    recording = Path(recording)
+    with wave.open(str(recording)) as w:
+        rate, channels = w.getframerate(), w.getnchannels()
+        data = w.readframes(min(w.getnframes(), rate * 120))      # the take starts within two minutes
+    x = np.frombuffer(data, dtype="<i2").reshape(-1, channels).astype(np.float32).mean(axis=1)
+    loud = np.nonzero(np.abs(x) > SILENCE)[0]
+    if not len(loud):
+        raise sloop.SloopError("bad", f"{recording.name}: nothing but silence")
+    x = x[max(0, loud[0] - rate // 200):][:int(seconds * rate)]
+    x = x[:np.nonzero(np.abs(x) > SILENCE)[0][-1] + rate // 20]   # silence at the end
+    target = 22050
+    if rate != target:                                            # anti-alias, then resample
+        k = max(1, int(round(rate / target)))
+        if k > 1:
+            x = np.convolve(x, np.ones(k) / k, mode="same")
+        x = np.interp(np.arange(0, len(x), rate / target), np.arange(len(x)), x)
+    fade = min(len(x), target // 100)
+    x[len(x) - fade:] *= np.linspace(1, 0, fade)
+    middle = x[len(x) // 10:len(x) // 10 + 4096]                  # past the attack
+    freq, _ = meters.pitch(middle, target, lo=30.0, hi=2000.0)
+    note = f"_{meters.note_name(meters.note_of(freq)[3])}" if freq else ""
+    stamp = recording.stem.split("_")[1] if recording.stem.count("_") >= 2 else recording.stem[:8]
+    out = folder("samples") / f"rec-{stamp}{note}.wav"
+    pcm = np.clip(x / max(1.0, np.abs(x).max()) * 30000, -32768, 32767).astype("<i2")
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(target)
+        w.writeframes(pcm.tobytes())
+    return out
+
+
+def job_load_sample(slot, name, wavs, recording=None):
     if slot not in (1, 2, 3, 4):
         raise ValueError("SLOT is 1, 2, 3 or 4")
     with Job("load-sample") as job:
+        if recording:
+            job.step("Trimming the recording")
+            wavs = [sample_from_recording(recording)]
         job.step("Converting")
         header, data = sloop.build_slot(name, wavs)    # bad WAVs stop here, before the FM-1 is touched
         job.step("Connecting")
@@ -451,6 +502,8 @@ def main(argv=None):
             job_save_project(*args)
         elif command == "load-sample" and len(args) >= 3:
             job_load_sample(int(args[0]), args[1], args[2:])
+        elif command == "load-recording" and len(args) == 3:
+            job_load_sample(int(args[0]), args[1], [], recording=args[2])
         elif command == "flash" and len(args) == 1:
             job_flash(args[0])
         elif command == "fetch-sloop":

@@ -45,6 +45,9 @@ DEFAULTS = {
     "clock_mode": "follow", # MIDI clock: "follow" (pass on and show incoming clock) or "box" (send our own)
     "bpm": 120,             # the box's tempo when it's the clock master
     "routes": None,         # the MIDI matrix: {"BT>FM-1": {...}, ...}; None = every route on, unchanged
+    "route_presets": None,  # {"1": {"routes": ..., "saved": time}, ...}: matrix setups to recall
+    "metronome": False,     # a click on the speaker in time with the clock
+    "click": "mid",         # its level: "low", "mid", "high"
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -55,7 +58,7 @@ SCAN_SECONDS = 10
 TAP_GAP = 2.0                           # seconds: a longer pause between taps starts a new tap tempo
 BPM_RANGE = (30, 300)
 RECONNECT_EVERY = 20
-GROUPS = {"g_audio": ("audio", "Audio"), "g_midi": ("midi", "MIDI"), "g_clock": ("clock", "Clock")}
+GROUPS = {"g_more": ("more", "More")}   # Settings' one sub-list: what's set once and left
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|[\x01\x02]")
 UNNAMED = re.compile(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}")
 
@@ -438,10 +441,40 @@ def start_keys(post, flip=False):
 
 # ---------------------------------------------------------------- the app
 
+class CachedFont(ImageFont.FreeTypeFont):
+    """A TrueType font that remembers the text it has rendered and measured. FreeType takes ~4 ms per string on
+    a Zero W, and a screen is ~10 strings that rarely change: without this a frame took ~55 ms to draw, and a key
+    press waited for that. Kept to the last 512 strings."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.masks, self.lengths = {}, {}
+
+    def getmask2(self, text, mode="", *args, **kwargs):
+        key = (text, mode, args, tuple(sorted(kwargs.items())))
+        hit = self.masks.get(key)
+        if hit is None:
+            hit = super().getmask2(text, mode, *args, **kwargs)
+            if len(self.masks) >= 512:
+                self.masks.clear()
+            self.masks[key] = hit
+        return hit
+
+    def getlength(self, text, mode="", *args, **kwargs):
+        key = (text, mode, args, tuple(sorted(kwargs.items())))
+        hit = self.lengths.get(key)
+        if hit is None:
+            hit = super().getlength(text, mode, *args, **kwargs)
+            if len(self.lengths) >= 512:
+                self.lengths.clear()
+            self.lengths[key] = hit
+        return hit
+
+
 def font(size, bold=False):
     path = "/usr/share/fonts/truetype/dejavu/DejaVuSans%s.ttf" % ("-Bold" if bold else "")
     try:
-        return ImageFont.truetype(path, size)
+        return CachedFont(path, size)
     except OSError:
         return ImageFont.load_default()
 
@@ -473,6 +506,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback(state["audio_rate"])
+        self.metro_sent = None                # what the MIDI process was last told about the metronome
         self.source = self.sink = None
         self.volume = None
         self.auto = True                      # reconnect the last headphones by itself
@@ -494,6 +528,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
         self.mode = "on"                      # "on", "dim", "saver"
         self.frame = self.shown = None
         self.f_title, self.f_body, self.f_small = font(12, True), font(11), font(9)
+        self.f_big = font(26, True)          # the tuner's note
 
     def post(self, *event):
         self.events.put(event)
@@ -525,6 +560,11 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
             self.auto_backup()
+            metro = (self.state["metronome"], self.sink and self.sink["name"], self.state["click"],
+                     self.state["audio_rate"])
+            if self.midi and metro != self.metro_sent:      # the metronome runs in the MIDI process
+                self.midi.set_metronome(*metro)
+                self.metro_sent = metro
             request = library.take_request()
             if request:
                 self.post("request", request)                 # the web page wants a confirm here
@@ -659,17 +699,17 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
         wifi = {True: "on", False: "off", None: "?"}[self.wifi]
         rate = f"{self.state['audio_rate'] / 1000:g} kHz"
         tempo = f"{self.state['bpm']} BPM"
-        if self.settings_menu == "audio":
-            return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
-        if self.settings_menu == "midi":
-            return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
-                    ("routes", "MIDI routes", "›")]
-        if self.settings_menu == "clock":
-            return [("clock", "Clock", self.state["clock_mode"]),
-                    ("tempo", "Tempo", f"± {tempo}" if self.editing == "tempo" else tempo)]
-        clock = f"box {self.state['bpm']}" if self.state["clock_mode"] == "box" else "follow"
-        return [("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"), ("g_clock", "Clock", clock),
-                ("library", "Library", "›"), ("wifi", "Wi-Fi", wifi)]
+        onoff = lambda on: "on" if on else "off"      # noqa: E731
+        if self.settings_menu == "more":
+            return [("audio", "BT audio", audio), ("rate", "Audio rate", rate), ("click", "Click level", self.state["click"]),
+                    ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                    ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
+        keys = self.keys_route()
+        return [("metronome", "Metronome", onoff(self.state["metronome"])),      # what changes while playing
+                ("tempo", "Tempo", f"± {tempo}" if self.editing == "tempo" else tempo),
+                ("clock", "Clock", self.state["clock_mode"]), ("arp_on", "Arp", onoff(keys["arp_on"])),
+                ("chord_on", "Chord", onoff(keys["chord_on"])), ("speaker", "Speaker", speaker),
+                ("library", "Library", "›"), ("wifi", "Wi-Fi", wifi), ("g_more", "More", "›")]
 
     def change_setting(self):
         key = self.settings_rows()[self.setting][0]
@@ -691,8 +731,21 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
             self.set_clock("box" if self.state["clock_mode"] == "follow" else "follow")
         elif key == "tempo":
             self.editing = "tempo"
+        elif key == "metronome":
+            self.state["metronome"] = not self.state["metronome"]
+            self.save_settings()
+            if self.state["metronome"] and not self.sink:
+                self.say("Metronome: connect a speaker")
+        elif key == "click":
+            levels = ("low", "mid", "high")
+            self.state["click"] = levels[(levels.index(self.state["click"]) + 1) % 3]
+            self.save_settings()
+        elif key in ("arp_on", "chord_on"):    # the keyboard's arp and chord: on/off in one press
+            self.toggle_keys(key)
         elif key == "routes":
             self.open_matrix()
+        elif key == "presets":
+            self.open_presets()
         elif key == "midi" and self.midi:
             on = not self.midi.enabled
             self.midi.set_enabled(on)
@@ -750,6 +803,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
         self.busy = "Shutting down"
         self.render(force=True)
         self.recorder.stop()                  # finishes the WAV file
+        self.player.stop()
         self.loop.stop()
         time.sleep(1.5)
         self.display.power(False)
@@ -862,7 +916,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
             {"scan": self.draw_scan, "settings": self.draw_settings, "library": self.draw_library,
              "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job,
              "meter": lambda d: None, "matrix": self.draw_matrix, "route": self.draw_route,
-             "chanmap": self.draw_chanmap}.get(
+             "player": self.draw_player,
+             "chanmap": self.draw_chanmap, "presets": self.draw_presets}.get(
                 self.screen, self.draw_status)(d)
             if self.busy:
                 dots = "." * (int(now * 2) % 4)
@@ -995,7 +1050,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens):
     def run(self):
         threading.Thread(target=self.monitor, daemon=True).start()   # starts pw-loopback: keeps priority
         if hasattr(os, "nice"):
-            os.nice(10)     # Linux: this thread only (drawing, ~75 ms a frame), and threads it starts later
+            os.nice(5)      # Linux: this thread only (drawing, keys), and threads it starts later; MIDI and
+                            # audio run in processes of their own at real-time priority
         while True:
             try:
                 # 4 Hz: the MIDI dot and countdowns; 10 Hz for the meters

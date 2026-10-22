@@ -102,7 +102,9 @@ def test_box_clock_timing():
     status = bridge.clock_status(time.monotonic())
     assert status is None or status["source"] != "box"   # back to following
     bridge.clock_mode = "box"
-    assert bridge.clock_status(time.monotonic()) == {"bpm": 300, "source": "box", "playing": False}
+    status = bridge.clock_status(time.monotonic())
+    assert {k: status[k] for k in ("bpm", "source", "playing")} == {"bpm": 300, "source": "box", "playing": False}
+    assert status["bar"] and time.monotonic() - status["bar"] < 1.0       # a bar began in the last second
     bridge.clock_mode = "follow"
 
 
@@ -167,6 +169,113 @@ def test_bridge_uses_the_matrix():
     assert bridge.to_ble_sent == []                                     # FM-1 > BT off
     bridge.transport("start")
     assert bridge.usb.sent[-1] == b"\xfa" and bridge.to_ble_sent == []  # Box > FM-1 on, Box > BT off
+
+
+def test_bars_follow_start():
+    watch = blemidi.ClockWatch()
+    t = 100.0
+    watch.message(blemidi.START, t)
+    for i in range(200):                                # two bars and a bit
+        watch.message(blemidi.CLOCK, t + i * TICK_120)
+    now = t + 199 * TICK_120
+    assert abs(watch.bar(now) - (t + 192 * TICK_120)) < 1e-6   # bar 3 began at tick 192
+    watch.message(blemidi.START, t + 5)
+    for i in range(20):
+        watch.message(blemidi.CLOCK, t + 5 + i * TICK_120)
+    assert abs(watch.bar(t + 5.4) - (t + 5)) < 1e-6     # Start: tick 0 is beat 1 again
+
+
+def test_bunched_bluetooth_ticks():
+    """ticks delivered in radio packets every 7.5 ms (bunched, late by up to a packet): the fitted grid
+    stays within a millisecond or two, where single arrival times are off by up to 7.5 ms"""
+    import random
+    rng = random.Random(1)
+    watch = blemidi.ClockWatch()
+    period, t0 = 60 / (96.4 * 24), 50.0
+    for i in range(300):
+        sent = t0 + i * period
+        arrived = (int(sent / 0.0075) + 1) * 0.0075 + rng.uniform(0, 0.002)   # the next connection event
+        watch.message(blemidi.CLOCK, arrived)
+    now = t0 + 299 * period + 0.01
+    assert abs(watch.bpm(now) - 96.4) < 0.3, watch.bpm(now)
+    true_bar = t0 + period * 96 * (299 // 96) + 0.0075 / 2 + 0.001   # plus the average delivery delay
+    assert abs(watch.bar(now) - true_bar) < 0.003, watch.bar(now) - true_bar
+
+
+def test_chord_memory():
+    route = blemidi.Route({"chord_on": True, "chord": "maj"})
+    assert route.apply_all(b"\x90\x3c\x50") == [b"\x90\x3c\x50", b"\x90\x40\x50", b"\x90\x43\x50"]
+    route.update({"chord_on": True, "chord": "m7"})                     # changed while the key is held
+    assert route.apply_all(b"\x80\x3c\x00") == [b"\x80\x3c\x00", b"\x80\x40\x00", b"\x80\x43\x00"]
+    assert len(blemidi.Route({"chord_on": True, "chord": "oct", "transpose": 120}).apply_all(b"\x90\x02\x50")) == 1
+    assert blemidi.Route({"chord": "maj"}).apply_all(b"\x90\x3c\x50") == [b"\x90\x3c\x50"]   # chord off: one note
+    legacy = blemidi.Route({"chord": "off", "arp": "off"})                # saved before the on/off switches
+    assert legacy.s["chord"] == "maj" and legacy.s["arp"] == "up" and not legacy.arp_active()
+
+
+def play(route, ticks):
+    """the notes the arp starts over `ticks` clock ticks, and every message"""
+    messages = [m for _ in range(ticks) for m in route.tick()]
+    return [m[1] for m in messages if m[0] & 0xF0 == 0x90], messages
+
+
+def test_arpeggiator():
+    route = blemidi.Route({"arp_on": True, "arp": "up", "arp_rate": "1/16"})
+    for note in (0x43, 0x3C, 0x40):                                     # G, C, E: played out of order
+        assert route.apply_all(bytes([0x90, note, 0x64])) == []        # held, not played: the arp plays them
+    notes, messages = play(route, 36)                                   # 36 ticks of 1/16: 6 steps
+    assert notes == [0x3C, 0x40, 0x43, 0x3C, 0x40, 0x43]
+    ons = [i for i, m in enumerate(messages) if m[0] == 0x90]
+    assert all(messages[i + 1][0] == 0x80 for i in ons[:-1])            # each note ends before the next
+    for pattern, expected in (("down", [0x43, 0x40, 0x3C]), ("updown", [0x3C, 0x40, 0x43, 0x40]),
+                              ("played", [0x43, 0x3C, 0x40])):
+        route.update({"arp_on": True, "arp": pattern, "arp_rate": "1/16"})
+        for note in (0x43, 0x3C, 0x40):
+            route.apply_all(bytes([0x90, note, 0x64]))
+        route.restart()
+        assert play(route, 6 * len(expected))[0] == expected, pattern
+    route.update({"arp_on": False})                                     # lets go of everything
+    route.update({"arp_on": True, "arp": "up", "arp_rate": "1/4", "arp_octaves": 2, "chord_on": True, "chord": "5th"})
+    route.apply_all(b"\x90\x30\x64")                                   # one key, a fifth, two octaves
+    route.restart()
+    assert play(route, 24 * 4)[0] == [0x30, 0x37, 0x3C, 0x43]
+    # letting go stops the note; switching the arp off mid-note stops it too
+    route.restart()
+    route.tick()
+    assert route.apply_all(b"\x80\x30\x00") == [bytes([0x80, 0x30, 0])]
+    route.apply_all(b"\x90\x30\x64")
+    route.restart()
+    route.tick()
+    assert route.update({"arp_on": False, "chord_on": True, "chord": "5th"}) == [bytes([0x80, 0x30, 0])]
+
+
+def test_arp_keeps_time_without_a_clock():
+    bridge = make_bridge()
+    routes = blemidi.default_routes()
+    routes["BT>FM-1"].update(arp_on=True, arp="up", arp_rate="1/16")
+    bridge.set_routes(routes)
+    bridge.bpm = 120.0                                                  # 1/16 at 120 BPM: every 125 ms
+    bridge.from_ble(ble_packet(b"\x90\x3c\x64", b"\x90\x40\x64"), "/dev/keys")
+    assert bridge.usb.sent == []
+    threading.Thread(target=bridge.clock_loop, daemon=True).start()
+    time.sleep(0.6)
+    ons = [m for m in bridge.usb.sent if m[0] == 0x90]
+    assert 4 <= len(ons) <= 6 and [m[1] for m in ons[:3]] == [0x3C, 0x40, 0x3C], ons
+    assert b"\xf8" not in bridge.usb.sent                               # its own ticks: no clock sent
+    bridge.set_routes(blemidi.default_routes())                          # arp off: the loop goes quiet
+
+
+def test_notes_for_the_midi_meter():
+    bridge = make_bridge()
+    bridge.from_ble(ble_packet(b"\x90\x3c\x40", b"\x90\x40\x40", b"\x99\x24\x7f"), "/dev/keys")
+    bridge.from_usb(b"\x92\x43\x50")                                  # the FM-1's own sequencer
+    notes, chans = bridge.notes_status(time.monotonic())
+    assert notes == [0x24, 0x3C, 0x40, 0x43] and chans == (1 << 0) | (1 << 9) | (1 << 2)
+    bridge.from_ble(ble_packet(b"\x80\x3c\x00", b"\x90\x40\x00"), "/dev/keys")
+    notes, _ = bridge.notes_status(time.monotonic())
+    assert notes == [0x24, 0x43]
+    notes, chans = bridge.notes_status(time.monotonic() + 31)          # no note-off for 30 s: forgotten
+    assert notes == [] and chans == 0
 
 
 if __name__ == "__main__":

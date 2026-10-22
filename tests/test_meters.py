@@ -213,6 +213,82 @@ def test_recording():
         meters.subprocess.Popen = FakePwRecord.real
 
 
+def test_pitch_and_chords():
+    for hz, name in ((55.0, "A1"), (110.0, "A2"), (261.63, "C4"), (440.0, "A4"), (880.0, "A5"), (1318.5, "E6")):
+        t = np.arange(1024) / meters.RATE
+        saw = sum(np.sin(2 * math.pi * hz * k * t) / k for k in range(1, 6))   # harmonics, like a synth
+        freq, clarity = meters.pitch(saw, meters.RATE, hi=2500.0)
+        note, octave, cents, _ = meters.note_of(freq)
+        assert f"{note}{octave}" == name and abs(cents) < 6 and clarity > 0.9, (hz, freq, cents)
+    noise = np.random.default_rng(2).standard_normal(1024)
+    assert meters.pitch(noise, meters.RATE)[0] is None                       # no pitch in noise
+    assert meters.chord_name([60, 64, 67]) == "C" and meters.chord_name([57, 60, 64]) == "Am"
+    assert meters.chord_name([55, 59, 62, 65]) == "G7" and meters.chord_name([62]) == "D4"
+    assert meters.chord_name([60, 61]) is None and meters.chord_name([]) is None
+
+
+class FakeMidi:
+    enabled, error, pairing_until, peer = True, None, 0.0, "SMK-37"
+    clock, notes, chans = None, [60, 64, 67, 72], (1 << 0) | (1 << 9)
+
+    def usb_label(self):
+        return "Felucca"
+
+    def activity(self):
+        return 0.0
+
+
+def test_tuner_and_midi_meters():
+    t = np.arange(meters.RECENT_N) / meters.RATE
+    a3 = (np.stack([np.sin(2 * math.pi * 220 * t)] * 2, axis=1) * 12000).astype(np.int16)
+    app, display = make_app(a3)
+    app.state["meter"] = meters.METERS.index("Tuner")
+    app.open_meters()
+    app.render(force=True)
+    assert app.m_tune[:2] == ["A", 3] and abs(app.m_tune[2]) < 5
+    if OUT:
+        display.image.convert("L").resize((512, 256)).save(OUT / "meter-tuner.png")
+    app, display = make_app(a3)
+    app.midi = FakeMidi()
+    app.state["meter"] = meters.METERS.index("MIDI")
+    app.open_meters()
+    view = app.meter_view(time.monotonic())
+    assert view[0] == (meters.METERS.index("MIDI"), (60, 64, 67, 72), (1 << 0) | (1 << 9)) and not app.levels.proc
+    app.render(force=True)
+    assert app.m_base == 48                               # C4..C5 fit the keyboard's C3..B5
+    if OUT:
+        display.image.convert("L").resize((512, 256)).save(OUT / "meter-midi.png")
+    app.midi.notes = [90]                                 # F#6: the keyboard moves up an octave at a time
+    app.render(force=True)
+    assert app.m_base == 84
+
+
+def test_beat_and_level_meters():
+    assert meters.beat_position({"bpm": 120, "bar": 10.0}, 11.25) == 2.5    # 1.25 s at 120 BPM
+    assert meters.history_y(-48) == 63 and meters.history_y(0) == 12
+    t = np.arange(meters.RECENT_N) / meters.RATE
+    mono = np.sin(2 * math.pi * 330 * t) * 9000
+    same = np.stack([mono, mono], axis=1).astype(np.int16)
+    assert abs(meters.correlation(same) - 1) < 1e-6
+    assert abs(meters.correlation(np.stack([mono, -mono], axis=1).astype(np.int16)) + 1) < 1e-6
+    assert len(meters.waterfall_bins()) == 65
+    app, display = make_app(same)
+    app.midi = FakeMidi()
+    app.midi.clock = {"bpm": 120, "source": "box", "playing": True, "bar": time.monotonic() - 0.6}
+    drawn = {"Waterfall": lambda: app.m_wf is not None and app.m_wf.any(),   # each meter's own state
+             "Stereo": lambda: app.m_corr > 0.5, "History": lambda: bool(app.m_hist),
+             "Beat": lambda: display.image.convert("L").histogram()[255] > 200}
+    for name, check in drawn.items():
+        app.state["meter"] = meters.METERS.index(name)
+        app.open_meters()
+        for _ in range(4):
+            app.render(force=True)
+            time.sleep(0.1)                               # as the screen does: smoothing needs time
+        assert check(), name
+        if OUT:
+            display.image.convert("L").resize((512, 256)).save(OUT / f"meter-{name.lower()}.png")
+
+
 def test_pack_pages():
     import random
     from PIL import Image
