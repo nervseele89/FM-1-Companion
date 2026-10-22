@@ -563,6 +563,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
             self.auto_backup()
+            self.identify_fm1()
             self.web_publish()
             metro = (self.state["metronome"], self.sink and self.sink["name"], self.state["click"],
                      self.state["audio_rate"])
@@ -905,7 +906,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
                     self.recorder.recording())
         return (self.screen, self.busy and (self.busy, int(now * 2) % 4),
                 self.message if now < self.message_until else None, self.loop.running(),
-                self.source and self.source["label"], self.sink and self.sink["label"], self.connecting,
+                self.source and self.source["label"], self.fw_label, self.sink and self.sink["label"], self.connecting,
                 self.state["last_name"], self.auto, self.volume,
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4), self.clock_text(),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
@@ -958,7 +959,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             out = self.state["last_name"] + (" (off)" if self.auto else " (paused)")
         else:
             out = "none: press KEY1"
-        rows = (("IN", short_label(self.source["label"]) if self.source else "FM-1 not found"),
+        rows = (("IN", (self.fw_label or short_label(self.source["label"])) if self.source else "FM-1 not found"),
                 ("OUT", out),
                 ("MIDI", self.midi_text()))
         for i, (name, value) in enumerate(rows):

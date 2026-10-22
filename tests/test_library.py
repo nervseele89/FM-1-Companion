@@ -43,6 +43,21 @@ def write_wav(path, seconds=0.3, hz=220):
     return path
 
 
+def test_firmware_label():
+    """The screens say what the FM-1 runs, not its USB name (Felucca whatever the firmware)."""
+    saved, library.FIRMWARE = library.FIRMWARE, TMP / "fm1-firmware.json"
+    try:
+        assert library.firmware_label() is None
+        for said, shown in (("FELUCCA SLOOP 2.8", "SLOOP 2.8"), ("FELUCCA CLIPPER 0.3", "Clipper 0.3"),
+                            ("FELUCCA 1.4", "Felucca 1.4")):
+            library.FIRMWARE.write_text(json.dumps({"firmware": said}))
+            assert library.firmware_label() == shown, (said, library.firmware_label())
+        library.forget_firmware()
+        assert library.firmware_label() is None
+    finally:
+        library.FIRMWARE = saved
+
+
 def test_encodings():
     for data in (b"", b"\x00", bytes(range(256)), bytes([0xFF] * 7), bytes([0x80] * 15)):
         assert sloop.unpack7(sloop.pack7(data)) == data

@@ -19,6 +19,7 @@
   library.py import-sd                copy new files from the SD card's fm1-library folder
   library.py list                     the library as JSON
   library.py info                     what the FM-1 runs
+  library.py identify                 the same, quietly, for the screens ("SLOOP 2.8", not its USB name)
 
 Progress and the result go to $XDG_RUNTIME_DIR/fm1-library.json (the screen and the web page read it);
 one job runs at a time. Exit code 0 when the job worked.
@@ -42,6 +43,7 @@ LIBRARY = Path(os.environ.get("FM1_LIBRARY", Path.home() / "fm1-library"))
 FOLDERS = ("backups", "projects", "samples", "firmware", "recordings")
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
 STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
+FIRMWARE = RUNTIME / "fm1-firmware.json"     # what the connected FM-1 last said it runs
 SD = Path(os.environ.get("FM1_SD_LIBRARY", "/boot/firmware/fm1-library"))
 SD_SYNC = "/usr/local/sbin/fm1-sd-sync"
 KEEP_AUTO = 20
@@ -233,7 +235,32 @@ def take_commands():
 # ---------------------------------------------------------------- the device
 
 def connect():
-    return sloop.Sloop(sloop.Link())
+    dev = sloop.Sloop(sloop.Link())
+    try:
+        FIRMWARE.write_text(json.dumps({"firmware": str(dev.version)}))
+    except OSError:
+        pass
+    return dev
+
+
+def forget_firmware():
+    try:
+        FIRMWARE.unlink()
+    except OSError:
+        pass
+
+
+def firmware_label():
+    """"SLOOP 2.8" from what the FM-1 last said ("FELUCCA SLOOP 2.8"); None if nothing has asked it yet. Its
+    USB name says Felucca whatever it runs."""
+    try:
+        words = str(json.loads(FIRMWARE.read_text())["firmware"]).split()
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if len(words) > 1 and words[0].upper() == "FELUCCA" and not any(c.isdigit() for c in words[1]):
+        words = words[1:]
+    return " ".join(w if any(c.isdigit() for c in w) or w.upper() == "SLOOP" else w.capitalize()
+                    for w in words) or None
 
 
 def safety_backup(dev, job, why):
@@ -575,6 +602,10 @@ def main(argv=None):
             print(json.dumps(import_sd()))
         elif command == "list":
             print(json.dumps(listing(), indent=1))
+        elif command == "identify":
+            with Job("identify") as job:
+                dev = connect()
+                job.done(firmware_label() or str(dev.version))
         elif command == "info":
             dev = connect()
             print(json.dumps({**dev.info, "can_backup": dev.can_backup()}))

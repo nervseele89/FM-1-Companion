@@ -24,7 +24,7 @@ class WebLink:
         midi, clock = self.midi, getattr(self.midi, "clock", None) if self.midi else None
         keys = self.keys_route()
         return {
-            "fm1": self.source and self.source["label"], "live": self.loop.running(),
+            "fm1": self.source and (self.fw_label or self.source["label"]), "live": self.loop.running(),
             "speaker": self.sink and self.sink["label"], "speaker_name": self.state["last_name"],
             "connecting": self.connecting, "volume": self.volume,
             "midi": {"peer": midi and midi.peer, "enabled": bool(midi and midi.enabled), "usb": midi and midi.usb_label(),

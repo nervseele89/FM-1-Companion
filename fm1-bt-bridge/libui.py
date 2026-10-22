@@ -57,6 +57,7 @@ class LibraryScreens:
         self.job_state, self.job_read = None, 0.0
         self.autobackup_flag = Path(library.RUNTIME) / "fm1-autobackup.done"
         self.last_auto = time.monotonic()     # the interval counts from start-up (or the last auto backup)
+        self.fw_label, self.fw_seen, self.fw_asked = library.firmware_label(), None, False
 
     # ---- jobs
     def library_state(self, now=None):
@@ -100,6 +101,23 @@ class LibraryScreens:
             return
         self.last_auto = now
         self.start_job(["backup", "--auto"], "Auto backup", show=False)
+
+    def identify_fm1(self):
+        """Keep fw_label ("SLOOP 2.8") for the screens. Any job that talks to the FM-1 notes what it runs; if
+        none has 5 s after the FM-1 shows up (the boot backup usually has), ask it once. Forgotten when it
+        goes away: a firmware update or another FM-1 may come back."""
+        if not (self.midi and self.midi.usb_label()):
+            if self.fw_seen is not None:
+                library.forget_firmware()
+            self.fw_label, self.fw_seen, self.fw_asked = None, None, False
+            return
+        now = time.monotonic()
+        self.fw_seen = self.fw_seen or now
+        self.fw_label = library.firmware_label()
+        if self.fw_label or self.fw_asked or now - self.fw_seen < 5 or self.job_busy():
+            return
+        self.fw_asked = True
+        self.start_job(["identify"], "Identify", show=False)
 
     def cycle_auto(self):
         mode = AUTO_CHOICES[(AUTO_CHOICES.index(self.auto_mode()) + 1) % len(AUTO_CHOICES)]

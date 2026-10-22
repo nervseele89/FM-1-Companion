@@ -8,6 +8,7 @@ and MIDI passes both ways between it and the FM-1's USB MIDI port:
 The packet coding (encode / strip_timestamps) is plain Python; the BlueZ side needs python3-dbus
 and python3-gi, the USB side python3-mido and python3-rtmidi.
 """
+import re
 import threading
 import time
 
@@ -16,6 +17,7 @@ MIDI_IO = "7772e5db-3868-4112-a1a9-f2669d106bf3"
 PACKET = 20                 # ATT payload with the minimum MTU: safe with every central
 DEVICE_NAME = "FM-1 Bridge"
 PAIRING_SECONDS = 120
+ADDRESS = re.compile(r"([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}")     # what BlueZ calls a device before its name
 
 
 # ---------------------------------------------------------------- BLE MIDI packets
@@ -459,7 +461,8 @@ def start_bluez(bridge):
     bus.watch_name_owner(BLUEZ, owner_changed)    # also calls back now if bluetoothd is running
 
     bridge.bluez = {"notify": chrc.notify, "set_advertising": set_advertising, "open_pairing": open_pairing,
-                    "peer_name": peer_name, "connected_peer": connected_peer, "idle_add": GLib.idle_add}
+                    "peer_name": peer_name, "connected_peer": connected_peer, "idle_add": GLib.idle_add,
+                    "timeout_add_seconds": GLib.timeout_add_seconds}
     GLib.MainLoop().run()
 
 
@@ -963,7 +966,7 @@ class MidiBridge:
     def from_ble(self, packet, device_path):
         if device_path and str(device_path) != self.peer_path:
             self.peer_path, self.peer = str(device_path), self.peer or "connected"
-            self.bluez["idle_add"](self.lookup_name)          # after replying to bluetoothd
+            self.bluez["idle_add"](self.find_name)            # after replying to bluetoothd
         self.last_ble = time.monotonic()
         route = self.routes["BT>FM-1"]
         messages = [out for m in self.ble_stream.feed(strip_timestamps(packet))
@@ -975,14 +978,25 @@ class MidiBridge:
         log_timing(packet, self.last_ble)
 
     def lookup_name(self):
+        """True (keep the timer) while BlueZ still only has the address: a keyboard's name is read a few
+        seconds after it connects, so the first look often gets 28-9E-F6-…"""
         if self.peer_path:
             self.peer = self.bluez["peer_name"](self.peer_path) or self.peer
+        self.naming = bool(self.peer_path and self.peer and ADDRESS.fullmatch(self.peer))
+        return self.naming
+
+    def find_name(self):
+        if getattr(self, "naming", False):                    # already asking every 3 s
+            return False
+        if self.lookup_name() and "timeout_add_seconds" in self.bluez:
+            self.bluez["timeout_add_seconds"](3, self.lookup_name)
         return False
 
     def subscribed(self, on):
         if on:
             path, name = self.bluez["connected_peer"]() if self.bluez else (None, None)
             self.peer_path, self.peer = path, name or "connected"
+            self.find_name()
         else:
             self.peer, self.peer_path = None, None
 

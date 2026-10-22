@@ -35,6 +35,21 @@ def make_bridge():
     return bridge
 
 
+def test_peer_name_after_address():
+    """BlueZ often has only the address when a keyboard connects; the name shows up once it has it."""
+    bridge = make_bridge()
+    names, timers = ["28-9E-F6-E8-D8-53", "28-9E-F6-E8-D8-53", "SMK-37+VA_BLE"], []
+    bridge.bluez.update(peer_name=lambda p: names.pop(0),
+                        connected_peer=lambda: ("/org/bluez/hci0/dev_28", "28-9E-F6-E8-D8-53"),
+                        timeout_add_seconds=lambda s, f: timers.append(f))
+    bridge.subscribed(True)
+    assert bridge.peer == "28-9E-F6-E8-D8-53" and len(timers) == 1
+    bridge.find_name()                                   # a second look doesn't start a second timer
+    assert len(timers) == 1
+    assert timers[0]() is True                           # still the address: keep asking
+    assert timers[0]() is False and bridge.peer == "SMK-37+VA_BLE"
+
+
 def ble_packet(*messages):
     return blemidi.encode([bytes(m) for m in messages], 1000)[0]
 
