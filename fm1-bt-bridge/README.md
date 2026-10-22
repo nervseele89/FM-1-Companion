@@ -85,7 +85,7 @@ Any key brings the full screen back; that key press does nothing else.
 Always shut down with **KEY3** (hold) before pulling the power. Pulling the power on a running Pi
 can lose recently changed files or corrupt the SD card.
 
-**Settings** (joystick right; six rows, three at a time):
+**Settings** (joystick right; seven rows, three at a time):
 
 ![Settings](../docs/images/screen-settings.png)
 
@@ -94,6 +94,7 @@ can lose recently changed files or corrupt the SD card.
 | **Library ›** | Backups, projects, samples and firmware (below). |
 | **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
 | **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
+| **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). |
 | **BLE MIDI** on/off | Shows or hides "FM-1 Bridge" to MIDI apps. It's remembered. |
 | **Pairing** | Opens a 2-minute window in which a device can pair with the bridge. Only needed on systems that want to pair first (below). |
 | **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |

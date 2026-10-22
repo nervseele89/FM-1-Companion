@@ -213,9 +213,29 @@ def test_job_screen_and_status():
     snap(app, "status-backup")
 
 
+def test_audio_rate():
+    app = make_app()
+    reopened = []
+    app.loop.reopen = reopened.append
+    app.screen = "settings"
+    app.setting = [row[0] for row in app.settings_rows()].index("rate")
+    assert app.settings_rows()[app.setting][2] == "48 kHz"
+    app.on_key("press")
+    assert app.state["audio_rate"] == 44100 and reopened == [44100]
+    assert app.settings_rows()[app.setting][2] == "44.1 kHz"
+    snap(app, "settings-rate")
+    app.on_key("press")
+    assert app.state["audio_rate"] == 48000 and reopened == [44100, 48000]
+    # reopening: no new loopback until the FM-1's input has had time to close
+    loop = bridge.Loopback(44100)
+    loop.reopen(48000)
+    loop.ensure("alsa_input.fm1", "bluez_output.x")
+    assert loop.rate == 48000 and not loop.running()
+
+
 if __name__ == "__main__":
     for name, fn in [("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
-                     ("test_job_screen_and_status", test_job_screen_and_status)]:
+                     ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate)]:
         fn()
         print("ok", name)
     print("all passed")

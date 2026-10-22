@@ -39,7 +39,7 @@ music playing: about a quarter of the CPU while shown, and no audio dropouts.
 | | |
 |---|---|
 | ![Status screen](docs/images/screen-status.png) | ![Settings](docs/images/screen-settings.png) |
-| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume. LIVE means audio is flowing. | **Settings** (joystick right): the library, speaker, Bluetooth audio on/off, BLE MIDI, a pairing window, Wi-Fi. |
+| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume. LIVE means audio is flowing. | **Settings** (joystick right): the library, speaker, Bluetooth audio on/off, the audio rate (44.1/48 kHz), BLE MIDI, a pairing window, Wi-Fi. |
 | ![Library](docs/images/screen-library.png) | ![Firmware install](docs/images/screen-job.png) |
 | **Library:** back up, restore, load a project or a sample, install firmware, import from the SD card. Writes ask you to hold the joystick press for 2 seconds, and back up first. | **A job running:** here a SLOOP update, about 2 minutes. |
 | ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |

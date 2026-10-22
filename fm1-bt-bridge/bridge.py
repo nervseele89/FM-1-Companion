@@ -39,6 +39,7 @@ DEFAULTS = {
     "flip_joystick": None,  # None: match the screen; true/false to force
     "midi_enabled": True,
     "auto_backup": "boot",  # "off", "boot" (once at start-up), or minutes between backups: 2, 5, 10, 30
+    "audio_rate": 48000,    # PipeWire's rate (Hz), 48000 or 44100: the FM-1 is opened at this rate
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -233,6 +234,11 @@ def wifi_enabled():
     return {"enabled": True, "disabled": False}.get(out.strip()) if code == 0 else None
 
 
+def set_rate(rate):
+    """Lock PipeWire to rate (until PipeWire restarts; Loopback sets it again before each start)."""
+    run(["pw-metadata", "-n", "settings", "0", "clock.force-rate", str(rate)], timeout=5)
+
+
 def set_wifi(on):
     """NetworkManager keeps the setting across reboots."""
     run(["sudo", "-n", "nmcli", "radio", "wifi", "on" if on else "off"], timeout=10)
@@ -241,15 +247,19 @@ def set_wifi(on):
 class Loopback:
     """One pw-loopback process from the FM-1 to the headphones, restarted when either changes."""
 
-    def __init__(self):
+    def __init__(self, rate=48000):
         self.proc, self.key = None, None
+        self.rate, self.paused_until = rate, 0.0
 
     def ensure(self, source, sink):
         key = (source, sink) if source and sink else None
         if key == self.key and (key is None or self.proc.poll() is None):
             return
+        if time.monotonic() < self.paused_until:
+            return                            # reopening: the FM-1's input is still closing
         self.stop()
         if key:
+            set_rate(self.rate)
             self.proc = subprocess.Popen(
                 ["pw-loopback",
                  "--capture-props", f"target.object={source} node.dont-reconnect=true",
@@ -259,6 +269,13 @@ class Loopback:
 
     def running(self):
         return self.proc is not None and self.proc.poll() is None
+
+    def reopen(self, rate):
+        """Close the FM-1's input and open it again at rate. PipeWire closes an unused input after 5 s;
+        the FM-1 sometimes sends only silence until its input is opened afresh."""
+        self.rate = rate
+        self.stop()
+        self.paused_until = time.monotonic() + 7
 
     def stop(self):
         if self.proc and self.proc.poll() is None:
@@ -446,7 +463,7 @@ class App(LibraryScreens, MeterScreens):
         self.meter_init()
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
-        self.loop = Loopback()
+        self.loop = Loopback(state["audio_rate"])
         self.source = self.sink = None
         self.volume = None
         self.auto = True                      # reconnect the last headphones by itself
@@ -628,8 +645,9 @@ class App(LibraryScreens, MeterScreens):
         midi = "n/a" if not self.midi else "on" if self.midi.enabled else "off"
         left = self.midi.pairing_until - time.monotonic() if self.midi else 0
         wifi = {True: "on", False: "off", None: "?"}[self.wifi]
+        rate = f"{self.state['audio_rate'] / 1000:g} kHz"
         return [("library", "Library", "›"), ("speaker", "Speaker", speaker), ("audio", "BT audio", audio),
-                ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                ("rate", "Audio rate", rate), ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
                 ("wifi", "Wi-Fi", wifi)]
 
     def change_setting(self):
@@ -640,6 +658,12 @@ class App(LibraryScreens, MeterScreens):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
             self.disconnect() if self.sink else self.reconnect()
+        elif key == "rate":
+            rate = 44100 if self.state["audio_rate"] == 48000 else 48000
+            self.state["audio_rate"] = rate
+            self.save_settings()
+            self.loop.reopen(rate)
+            self.say(f"{rate / 1000:g} kHz: audio restarts")
         elif key == "midi" and self.midi:
             on = not self.midi.enabled
             self.midi.set_enabled(on)
