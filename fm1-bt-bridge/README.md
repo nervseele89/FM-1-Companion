@@ -9,8 +9,8 @@ A Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT that gives the M-VAVE FM-1 
 - **A library for the FM-1 (SLOOP):** back up and restore everything on it, load projects and samples,
   and install firmware updates, from the box or from your phone, with no computer.
 
-Audio and MIDI work with any FM-1 firmware that shows up as a USB audio and MIDI device, such as Sloop
-("Felucca"). The library needs SLOOP 2.3 or later (firmware installs work with any `.fwsc` package
+Audio and MIDI work with any FM-1 firmware that shows up as a USB audio and MIDI device, such as Sloop.
+The library needs SLOOP 2.3 or later (firmware installs work with any `.fwsc` package
 SLOOP's installer accepts).
 
 ```
@@ -77,7 +77,7 @@ about a quarter of the Zero W's CPU while shown (MIDI and Beat almost none), and
 ![Status screen](../docs/images/screen-status.png)
 
 - **LIVE**: audio is flowing from the FM-1 to the speaker.
-- **IN**: the FM-1, as its firmware names it (Sloop: "Felucca").
+- **IN**: what the FM-1 runs (SLOOP 2.8, say), as it reports it.
 - **OUT**: the speaker or headphones.
 - **MIDI**: the Bluetooth MIDI device connected. The dot blinks with MIDI traffic.
 - **VOL**: the speaker volume (joystick up/down).
@@ -237,7 +237,7 @@ The box talks to SLOOP (2.3 or later) the way SLOOP's own web editor does, over 
 Its backups are **SLOOP backup files** (`sloop-backup` JSON): they open in SLOOP's web editor, and
 backups made there can be restored from the box.
 
-**SLOOP or Clipper:** both are isod89's firmwares, based on Felucca. [SLOOP](https://github.com/isod89/sloop-fm1)
+**SLOOP or Clipper:** both are isod89's firmwares. [SLOOP](https://github.com/isod89/sloop-fm1)
 is a groovebox (tracks, drums, songs, samples); [Clipper](https://github.com/isod89/clipper-fm1) is a
 synthesizer (23 engines, one instrument) and is **experimental**: its own README says it has run very little
 on a real FM-1. The box installs either and switches between them (the file of the other one stays in the

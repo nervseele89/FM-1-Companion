@@ -1,4 +1,4 @@
-# FM-1 Sloop/Felucca Companion Device
+# FM-1 Sloop Companion Device
 
 [![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Falucca-Companion-Device@main/docs/video/fm1-bridge-demo.mp4)
 
@@ -9,8 +9,7 @@ with an overlay of each button press. The music was played on the FM-1 and recor
 ![The bridge: a Pi Zero W with the Waveshare OLED HAT, streaming the FM-1 to a JBL Go 3](docs/images/device.jpg)
 
 A pocket-sized companion box for the **M-VAVE FM-1** pocket synth running custom firmware such as
-[Sloop](https://github.com/isod89/sloop-fm1) or [Felucca](https://github.com/hugelton/Felucca).
-It started as a way to add the Bluetooth those firmwares leave switched off, and grew into a small studio
+[Sloop](https://github.com/isod89/sloop-fm1). It started as a way to add the Bluetooth those firmwares leave switched off, and grew into a small studio
 sidekick: it plays the FM-1 through wireless speakers and keyboards, records it, shapes its MIDI, shows what
 it's doing on eleven meters, and looks after everything stored on it, with no computer needed. It's a
 Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, plugged into the FM-1 by USB, and you run it from its
@@ -67,8 +66,7 @@ music playing: about a quarter of the CPU while shown, and no audio dropouts.
   normalized to full scale and clipped in the mix.
 - **A big volume bar** on the home screen while you change the volume, which now moves in even **2%** steps.
 - **Holding up or down speeds up** after a second and a half (volume, lists, tempo).
-- **The home screen names things properly:** IN shows what the FM-1 runs (**SLOOP 2.8**, not its USB name
-  "Felucca"), remembered across restarts, and MIDI shows the keyboard's name instead of its Bluetooth address.
+- **The home screen names things properly:** IN shows what the FM-1 runs (**SLOOP 2.8**, not its USB name), remembered across restarts, and MIDI shows the keyboard's name instead of its Bluetooth address.
 - **A demo video** at the top of this page.
 
 **Fixed and faster**
@@ -183,4 +181,4 @@ sudo reboot
 
 ## License
 
-GPL-3.0, like Sloop and Felucca. See [LICENSE](LICENSE).
+GPL-3.0, like Sloop. See [LICENSE](LICENSE).
