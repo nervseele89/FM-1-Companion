@@ -45,19 +45,23 @@ def short_firmware(text):
     return (text or "?").split()[-1]
 
 
+LIBRARY_KEYS = ("backup", "restore", "project", "sample", "recording", "firmware", "sd", "auto")
+
+
 class LibraryScreens:
-    """Screens: "library" (the menu), "pick" (a list), "confirm" (hold press 2 s) and "job"."""
+    """The Settings rows that reach the library (LIBRARY_KEYS: Recordings, and the Sloop and FM-1 groups), and
+    their screens: "pick" (a list), "confirm" (hold press 2 s), "player" and "job". Back goes to Settings."""
 
     def library_init(self):
-        self.lib_cursor = 0
         self.pick = None                      # {"title", "items": [(label, value, payload)], "cursor", "on", "back"}
         self.confirm = None                   # {"title", "lines", "action", "back"}
         self.player, self.player_name = Player(), None    # a recording playing on the speaker
-        self.job_title, self.job_back = "", "library"
+        self.job_title, self.job_back = "", "settings"
         self.job_state, self.job_read = None, 0.0
         self.autobackup_flag = Path(library.RUNTIME) / "fm1-autobackup.done"
         self.last_auto = time.monotonic()     # the interval counts from start-up (or the last auto backup)
-        self.fw_label, self.fw_seen, self.fw_asked = library.firmware_label(), None, False
+        self.fw_label = library.firmware_label() or self.state.get("fw_label")
+        self.fw_seen, self.fw_asked = None, False
 
     # ---- jobs
     def library_state(self, now=None):
@@ -77,7 +81,7 @@ class LibraryScreens:
             return
         self.job_read = 0.0
         if show:
-            self.job_title, self.job_back = title, self.screen if self.screen != "confirm" else "library"
+            self.job_title, self.job_back = title, self.screen if self.screen != "confirm" else "settings"
             self.screen = "job"
 
     def auto_mode(self):
@@ -104,8 +108,9 @@ class LibraryScreens:
 
     def identify_fm1(self):
         """Keep fw_label ("SLOOP 2.8") for the screens. Any job that talks to the FM-1 notes what it runs; if
-        none has 5 s after the FM-1 shows up (the boot backup usually has), ask it once. Forgotten when it
-        goes away: a firmware update or another FM-1 may come back."""
+        none has 5 s after the FM-1 shows up (the boot backup usually has), ask it once. Until then the screens
+        show what it ran last time (kept in the settings), so the home screen isn't "Felucca" for the first
+        seconds after a boot. Asked again whenever it comes back: a firmware update or another FM-1."""
         if not (self.midi and self.midi.usb_label()):
             if self.fw_seen is not None:
                 library.forget_firmware()
@@ -113,8 +118,12 @@ class LibraryScreens:
             return
         now = time.monotonic()
         self.fw_seen = self.fw_seen or now
-        self.fw_label = library.firmware_label()
-        if self.fw_label or self.fw_asked or now - self.fw_seen < 5 or self.job_busy():
+        label = library.firmware_label()
+        self.fw_label = label or self.state.get("fw_label")
+        if label and label != self.state.get("fw_label"):
+            self.state["fw_label"] = label
+            self.save_settings()
+        if label or self.fw_asked or now - self.fw_seen < 5 or self.job_busy():
             return
         self.fw_asked = True
         self.start_job(["identify"], "Identify", show=False)
@@ -145,18 +154,8 @@ class LibraryScreens:
         return bool(state and state.get("job") == "flash")
 
     # ---- the menu
-    def library_rows(self):
-        """(key, label, value)"""
-        return [("backup", "Back up now", ""), ("restore", "Restore ›", ""), ("project", "Load project ›", ""),
-                ("sample", "Load sample ›", ""), ("recording", "Recordings ›", ""),
-                ("firmware", "Firmware ›", ""), ("sd", "Import SD card", ""),
-                ("auto", "Auto backup", self.auto_label(self.auto_mode()))]
-
-    def open_library(self):
-        self.screen, self.lib_cursor = "library", 0
-
-    def library_choose(self):
-        key = self.library_rows()[self.lib_cursor][0]
+    def library_choose(self, key):
+        """one of LIBRARY_KEYS, chosen in Settings"""
         if key == "backup":
             self.start_job(["backup"], "Backup")
             return
@@ -194,7 +193,7 @@ class LibraryScreens:
                 self.say(f"SD card: {e}"[:40])
 
     # ---- pickers
-    def open_pick(self, title, items, on, empty, back="library"):
+    def open_pick(self, title, items, on, empty, back="settings"):
         if not items:
             self.say(empty)
             return
@@ -264,7 +263,7 @@ class LibraryScreens:
         elif action == "delete":
             def delete():
                 path.unlink(missing_ok=True)
-                self.screen = "library"
+                self.screen = "settings"
                 self.say("Deleted")
             seconds = max(0, path.stat().st_size - 44) // 192000 if path.exists() else 0
             self.ask("Delete?", [short_date(name), f"{clock(seconds)} recorded"], delete)
@@ -295,15 +294,6 @@ class LibraryScreens:
     # ---- keys
     def library_key(self, key, held):
         """True if a Library screen took the key"""
-        if self.screen == "library":
-            rows = self.library_rows()
-            if key in ("up", "down"):
-                self.lib_cursor = (self.lib_cursor + (1 if key == "down" else -1)) % len(rows)
-            elif key in ("press", "right") and not held:
-                self.library_choose()
-            elif key == "left":
-                self.screen = "settings"
-            return True
         if self.screen == "pick":
             p = self.pick
             if key in ("up", "down"):
@@ -311,7 +301,7 @@ class LibraryScreens:
             elif key in ("press", "right") and not held:
                 p["on"](p["items"][p["cursor"]][2])
             elif key == "left":
-                self.screen = "library"
+                self.screen = "settings"
             return True
         if self.screen == "confirm":
             if key == "press" and held:
@@ -320,17 +310,17 @@ class LibraryScreens:
                 self.say("Hold to confirm", 1.5)
             elif key == "left":
                 back = self.confirm["back"]
-                self.screen = "library" if back == "pick" and not self.pick else back
+                self.screen = "settings" if back == "pick" and not self.pick else back
             return True
         if self.screen == "player":
             if key in ("press", "left", "right") and not held:
                 self.player.stop()
-                self.screen = "library"
+                self.screen = "settings"
             return True
         if self.screen == "job":
             state = self.library_state()
             if key in ("left", "press") and not job_running(state):
-                self.screen = self.job_back if self.job_back in ("library", "status") else "library"
+                self.screen = self.job_back if self.job_back in ("settings", "status") else "settings"
             return True
         return False
 
@@ -349,18 +339,16 @@ class LibraryScreens:
     # ---- drawing
     def library_view(self, now):
         state = self.library_state(now) if self.screen in ("job", "status") else None
-        if self.screen == "library":
-            return ("library", self.lib_cursor, self.auto_mode())
         if self.screen == "pick":
             return ("pick", self.pick["title"], self.pick["cursor"], tuple(i[:2] for i in self.pick["items"]))
         if self.screen == "confirm":
             return ("confirm", self.confirm["title"], tuple(self.confirm["lines"]))
         if self.screen == "player":
-            if not self.player.playing():     # played to the end: back to the Library
+            if not self.player.playing():     # played to the end: back to Settings
                 self.player.stop()
-                self.screen = "library"
+                self.screen = "settings"
                 self.say("Played to the end", 1.5)
-                return ("library", self.lib_cursor)
+                return ("settings",)
             return ("player", self.player_name, int(self.player.seconds(now) * 2))
         if self.screen == "job":
             s = state or {}
@@ -383,10 +371,6 @@ class LibraryScreens:
             d.text((2, y), self.fit(d, label, self.f_body, 120 - w), font=self.f_body, fill=0 if selected else 1)
             d.text((125 - w, y + 2), value, font=self.f_small, fill=0 if selected else 1)
         d.text((0, 53), footer, font=self.f_small, fill=1)
-
-    def draw_library(self, d):
-        self.draw_list(d, "Library", [(label, value) for _, label, value in self.library_rows()], self.lib_cursor,
-                       "press = choose   < back")
 
     def draw_pick(self, d):
         p = self.pick

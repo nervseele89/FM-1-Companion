@@ -764,7 +764,7 @@ class MeterScreens:
         clock = getattr(self.midi, "clock", None) if self.midi else None
         if not clock:                         # following, and nothing sends clock: say how to get one
             for y, text, f in ((16, "No clock coming in", self.f_body), (34, "Tap tempo on the home", self.f_small),
-                               (44, "screen, or Settings >", self.f_small), (54, "Clock > Clock: box", self.f_small)):
+                               (44, "screen, or Settings >", self.f_small), (54, "Playing > Clock: box", self.f_small)):
                 d.text(((128 - d.textlength(text, font=f)) / 2, y), text, font=f, fill=1)
             return
         self.last_activity = now

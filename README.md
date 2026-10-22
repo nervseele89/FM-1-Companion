@@ -41,35 +41,39 @@ the real FM-1 with a backup, a restore (read back byte for byte), a project load
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
-## What's new in v2.3
+## What's new in v2.4
 
-![The Beat meter following the clock](docs/images/screen-meter-beat.png)
+![Settings, in sections](docs/images/screen-settings.png)
 
 **New**
-- **Six more meters** (eleven in all): **Tuner** (the note, its frequency and cents off, boxed when in
-  tune; for samples, patches and other instruments), **MIDI** (a three-octave keyboard lighting the notes
-  played to and from the FM-1, the chord's name, and which channels are busy), **Waterfall** (a scrolling
-  spectrogram), **Stereo** (goniometer and correlation), **History** (the last 50 s of level) and **Beat**
-  (big BPM and a 1-2-3-4 counter in time with the clock, from MIDI alone).
-- **Recordings menu** (Library → Recordings ›): **Play** a take on the speaker over the FM-1's live sound,
-  **Load into slot ›** to resample it into the FM-1 (its first 7.3 s of sound, trimmed and faded, with the
-  note it plays detected so the sample plays in tune; also on the web page), or **Delete**.
-- **Metronome:** a click on the speaker in time with the box's clock or an incoming one (beat 1 higher),
-  three levels. It runs next to the clock on a real-time thread, so it stays steady.
-- **Arp and chord memory** for the keyboard: one-press **Arp** and **Chord** switches in Settings. The arp
-  plays held keys (chords included) in time with the clock: up, down, up-down, as played or random; 1/4 to
-  1/16; 1–3 octaves. It keeps its own time at the Tempo setting when there's no clock.
-- **Route presets:** save the MIDI matrix in one of four slots and load it back.
-- **Settings in one list:** what you change while playing (Metronome, Tempo, Clock, Arp, Chord, Speaker)
-  one press away; what's set once under **More ›**.
+- **Settings in sections:** a short top list (**Playing**, **Audio**, **MIDI**, **Recordings**, **Wi-Fi**,
+  **Sloop**, **FM-1**) instead of one long scroll. Playing, Audio and MIDI work whatever you plug in;
+  **Sloop ›** holds what needs SLOOP (backups, restores, projects, samples, the sample level, auto backup,
+  the SD card) and **FM-1 ›** what needs the FM-1 itself (what it runs, installing firmware).
+- **The web app does more** (on your phone at `http://fm1bridge.local`): live status, volume and the
+  playing settings, Start/Stop and recording, the MIDI matrix with named presets, and recordings that play
+  in the browser. Anything that writes to the FM-1 still waits for a hold-press on the box.
+- **Sample level** (Sloop ›): **-6 dB** (the default), **-3 dB** or **full**. Loaded samples used to be
+  normalized to full scale and clipped in the mix.
+- **A big volume bar** on the home screen while you change the volume, which now moves in even **2%** steps.
+- **Holding up or down speeds up** after a second and a half (volume, lists, tempo).
+- **The home screen names things properly:** IN shows what the FM-1 runs (**SLOOP 2.8**, not its USB name
+  "Felucca"), remembered across restarts, and MIDI shows the keyboard's name instead of its Bluetooth address.
+- **A demo video** at the top of this page.
 
 **Fixed and faster**
-- **The controls react at once:** screens redraw in about 8 ms instead of 50–60 ms (text is drawn once and
-  reused).
-- **A Bluetooth MIDI keyboard no longer needs a power cycle** after the bridge restarts (or connects
-  before it at boot): the box reconnects it, and its MIDI flows again in about 15 s.
-- **Following an external clock is steadier:** the tempo and beat grid are fitted to the last 48 ticks, so
-  ticks bunched by the radio don't make the beat or the metronome wobble.
+- **Recordings keep all their audio:** the recorder ran at 48 kHz while the FM-1 runs at 44.1 kHz, and on a
+  busy Pi it dropped blocks (a 96 s take came out 79 s long). It now records at the FM-1's own rate.
+- **Sample loads take about half as long** to convert (same bytes as SLOOP's own converter), and no longer
+  make a backup first: a sample only replaces its own slot.
+
+<details><summary>Earlier: v2.3</summary>
+
+Six more meters (Tuner, MIDI, Waterfall, Stereo, History, Beat), the Recordings menu (play a take, resample
+it into a slot, delete), a metronome, arp and chord memory with one-press switches, route presets, controls
+that react at once (screens redraw in about 8 ms), a Bluetooth MIDI keyboard that reconnects by itself after
+the bridge restarts, and a steadier external clock.
+</details>
 
 <details><summary>Earlier: v2.2</summary>
 
@@ -85,12 +89,14 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 |---|---|
 | ![Status screen](docs/images/screen-status.png) | ![Recording](docs/images/screen-status-rec.png) |
 | **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume and the clock. LIVE means audio is flowing. | **Recording:** REC and the time in place of LIVE. |
-| ![Settings](docs/images/screen-settings.png) | ![More](docs/images/screen-settings-more.png) |
-| **Settings** (joystick right): Metronome, Tempo, Clock, Arp, Chord, Speaker, Library, Wi-Fi, then More. | **More ›:** Bluetooth audio, the audio rate, the click level, Bluetooth MIDI, pairing, the MIDI routes and their presets. |
+| ![Settings](docs/images/screen-settings.png) | ![Playing](docs/images/screen-settings-play.png) |
+| **Settings** (joystick right): Playing, Audio, MIDI, Recordings, Wi-Fi, Sloop and FM-1. Press opens a section, left goes back. | **Playing ›:** Metronome, Tempo, Clock, Arp, Chord and the click level. **Audio ›** has the speaker and the audio rate; **MIDI ›** Bluetooth MIDI, pairing, the routes and their presets. |
+| ![Sloop](docs/images/screen-settings-sloop.png) | ![FM-1](docs/images/screen-settings-fm1.png) |
+| **Sloop ›:** back up, restore, load a project or a sample, the sample level, auto backup, the SD card. Writes ask you to hold the joystick press for 2 seconds; restores and project loads back up first. | **FM-1 ›:** what the FM-1 runs, and installing firmware (SLOOP and Clipper download from GitHub with Wi-Fi on). |
 | ![MIDI routes](docs/images/screen-matrix.png) | ![A route](docs/images/screen-route.png) |
 | **MIDI routes:** a filled square is a route that's on. Press opens it. | **A route:** here the keyboard is played an octave up with a soft velocity curve. |
-| ![Library](docs/images/screen-library.png) | ![Firmware install](docs/images/screen-job.png) |
-| **Library:** back up, restore, load a project or a sample, recordings, firmware, the SD card. Writes ask you to hold the joystick press for 2 seconds, and back up first. | **A job running:** here a SLOOP update, about 2 minutes. |
+| ![Volume](docs/images/screen-status-volume.png) | ![Firmware install](docs/images/screen-job.png) |
+| **Volume:** up/down on the home screen, in 2% steps, shown big for a moment. | **A job running:** here a SLOOP update, about 2 minutes. |
 | ![A recording](docs/images/screen-recordings.png) | ![Playing](docs/images/screen-player.png) |
 | **A recording:** play it, load it into a sample slot, or delete it. | **Playing** a take on the speaker. |
 | ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |
@@ -138,7 +144,7 @@ sudo reboot
 |---|---|
 | `fm1-bt-bridge/bridge.py` | The OLED app: status and settings screens, headphone pairing, audio routing (PipeWire), keys |
 | `fm1-bt-bridge/blemidi.py` | The Bluetooth LE MIDI service (BlueZ), its link to the FM-1's USB MIDI, the clock, the MIDI matrix with its arp and chord memory, and the metronome, in a process of its own |
-| `fm1-bt-bridge/libui.py` | The Library screens on the box |
+| `fm1-bt-bridge/libui.py` | The Sloop and FM-1 settings, recordings and their screens on the box |
 | `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
 | `fm1-bt-bridge/midiui.py` | The MIDI matrix screens on the box |
 | `fm1-bt-bridge/metronome.py` | The metronome's click stream (run by the MIDI process) |

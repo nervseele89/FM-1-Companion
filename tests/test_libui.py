@@ -5,6 +5,7 @@
 import os
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -74,6 +75,39 @@ def setup_library():
     return backup
 
 
+
+
+def test_quality_of_life():
+    """The firmware name from last time until the FM-1 is asked; the big volume bar; faster repeat when held."""
+    class Midi:                                            # the FM-1's MIDI is there
+        enabled, error, peer, pairing_until = True, None, None, 0.0
+
+        def usb_label(self):
+            return "Felucca"
+
+        def activity(self):
+            return 0.0
+
+    library.forget_firmware()
+    app = make_app()
+    app.state["fw_label"] = "SLOOP 2.8"
+    app.midi, app.job_busy = Midi(), lambda: None
+    app.identify_fm1()
+    assert app.fw_label == "SLOOP 2.8" and not app.fw_asked        # shown at once, asked after 5 s
+    # volume: snapped, shown big on the home screen for a moment
+    bridge.set_volume = lambda node, percent: None
+    app.screen, app.sink, app.volume = "status", {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}, 37
+    app.on_key("up")
+    assert app.volume == 38 and app.volume_shown > time.monotonic()
+    snap(app, "status-volume")
+    # holding up: 5 a second, then faster after 1.5 s
+    posted = []
+    timer = bridge.KeyTimer(lambda name, held=False: posted.append(name))
+    timer.pressed("up", 0.0)
+    for k in range(1, 61):                                 # 3 s in 50 ms ticks
+        timer.tick(k * 0.05)
+    assert len(posted) >= 20, len(posted)                  # 15 at an even 5 a second
+
 def test_volume_steps():
     """Up and down land on even steps (2 %), whatever the speaker had; a Bluetooth speaker's 1/127ths
     round back to the same whole percent."""
@@ -83,24 +117,41 @@ def test_volume_steps():
     assert all(round(round(p * 1.27) / 1.27) == p for p in range(0, 101, 2))
 
 
+def at_row(app, menu, key):
+    """Settings, on that row of that list (None: the top one)"""
+    app.screen, app.settings_menu = "settings", menu
+    app.setting = [r[0] for r in app.settings_rows()].index(key)
+
+
 def test_flows():
     backup = setup_library()
     app = make_app()
     keys(app, "right")
     top = [r[0] for r in app.settings_rows()]
-    assert app.screen == "settings" and top == ["metronome", "tempo", "clock", "arp_on", "chord_on", "speaker",
-                                                "library", "wifi", "g_more"]
+    assert app.screen == "settings" and top == ["g_play", "g_audio", "g_midi", "recording", "wifi", "g_sloop",
+                                                "g_fm1"]
+    keys(app, "press")                                     # Playing ›
+    assert app.settings_menu == "play" and [r[0] for r in app.settings_rows()] == [
+        "metronome", "tempo", "clock", "arp_on", "chord_on", "click"]
+    snap(app, "settings-play")
+    keys(app, "left", "down", "press")                     # Audio ›
+    assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]
+    keys(app, "left", "down", "press")                     # MIDI ›
+    assert [r[0] for r in app.settings_rows()] == ["midi", "pairing", "routes", "presets"]
+    keys(app, "left", "up", "up")                          # back on Playing, the top
+    assert app.settings_menu is None and app.setting == 0
     snap(app, "settings")
-    keys(app, "up", "press")                               # More › (up from the top wraps to the end)
-    assert app.settings_menu == "more" and [r[0] for r in app.settings_rows()] == [
-        "audio", "rate", "click", "sample_level", "midi", "pairing", "routes", "presets"]
-    snap(app, "settings-more")
-    keys(app, "left")                                      # back to the top list, on More
-    assert app.settings_menu is None and app.setting == top.index("g_more") and app.screen == "settings"
-    app.setting = top.index("library")                     # Library ›
-    keys(app, "press")
-    assert app.screen == "library"
-    snap(app, "library")
+    keys(app, "up", "up", "press")                         # Sloop › (up from the top wraps to the end)
+    assert app.settings_menu == "sloop" and [r[0] for r in app.settings_rows()] == [
+        "backup", "restore", "project", "sample", "sample_level", "auto", "sd"]
+    snap(app, "settings-sloop")
+    keys(app, "left")                                      # back to the top list, on Sloop
+    assert app.settings_menu is None and app.setting == top.index("g_sloop") and app.screen == "settings"
+    keys(app, "down", "press")                             # FM-1 ›
+    assert app.settings_menu == "fm1" and [r[0] for r in app.settings_rows()] == ["fw_info", "firmware"]
+    snap(app, "settings-fm1")
+    keys(app, "left", "up", "press")                       # Sloop › again
+    assert app.settings_menu == "sloop" and app.setting == 0
     keys(app, "press")                                     # Back up now
     assert app.started[-1] == ["backup"]
     keys(app, "down", "press")                             # Restore ›
@@ -114,7 +165,7 @@ def test_flows():
     keys(app, "press!")
     assert app.started[-1] == ["restore", str(backup)]
     # load project: from the backup's project A into C
-    app.screen, app.lib_cursor = "library", 2
+    at_row(app, "sloop", "project")
     keys(app, "press")
     assert app.screen == "pick" and app.pick["items"][0][0] == "Night Drive"
     snap(app, "project-source")
@@ -126,13 +177,13 @@ def test_flows():
     keys(app, "down", "down", "down", "press", "press!")   # C
     assert app.started[-1][:2] == ["load-project", str(backup)] and app.started[-1][3] == "C", app.started[-1]
     # sample into USR2
-    app.screen, app.lib_cursor = "library", 3
+    at_row(app, "sloop", "sample")
     keys(app, "press", "press", "down", "press")
     snap(app, "sample-confirm")
     keys(app, "press!")
     assert app.started[-1][:3] == ["load-sample", "2", "bass_C2"], app.started[-1]
     # firmware: the download row first (Wi-Fi on), then the file
-    app.screen, app.lib_cursor = "library", 5
+    at_row(app, "fm1", "firmware")
     keys(app, "press")
     assert app.pick["items"][0][0] == "Get SLOOP update"
     snap(app, "firmware-pick")
@@ -151,9 +202,9 @@ def test_flows():
     keys(app, "left")
     assert app.screen == "pick"
     keys(app, "left")
-    assert app.screen == "library"
+    assert app.screen == "settings" and app.settings_menu == "fm1"
     keys(app, "left")
-    assert app.screen == "settings"
+    assert app.screen == "settings" and app.settings_menu is None
 
 
 def test_auto_backup_schedule():
@@ -171,12 +222,12 @@ def test_auto_backup_schedule():
     app.midi, app.job_busy = Midi(), lambda: None
     app.autobackup_flag.unlink(missing_ok=True)
     # the menu row cycles off -> at start -> 2 -> 5 -> 10 -> 30 -> off ...
-    app.screen, app.lib_cursor = "library", 7
-    assert app.library_rows()[7][2] == "at start"
+    at_row(app, "sloop", "auto")
+    assert app.settings_rows()[app.setting][2] == "at start"
     seen = []
     for _ in range(6):
         keys(app, "press")
-        seen.append(app.library_rows()[7][2])
+        seen.append(app.settings_rows()[app.setting][2])
     assert seen == ["2 min", "5 min", "10 min", "30 min", "off", "at start"], seen
     snap(app, "library-auto")
     # at start: one backup, then none
@@ -235,8 +286,7 @@ def test_audio_rate():
     app = make_app()
     reopened = []
     app.loop.reopen = reopened.append
-    app.screen, app.settings_menu = "settings", "more"
-    app.setting = [row[0] for row in app.settings_rows()].index("rate")
+    at_row(app, "audio", "rate")
     assert app.settings_rows()[app.setting][2] == "48 kHz"
     app.on_key("press")
     assert app.state["audio_rate"] == 44100 and reopened == [44100]
@@ -298,7 +348,7 @@ def test_clock():
     app.message, app.job_busy = None, lambda: None        # no message box or job in the picture
     snap(app, "status-clock")
     # Settings: Clock row switches follow/box; Tempo row edits with up/down
-    app.screen, app.settings_menu = "settings", None
+    app.screen, app.settings_menu = "settings", "play"
     rows = [row[0] for row in app.settings_rows()]
     app.setting = rows.index("clock")
     app.on_key("press")
@@ -336,8 +386,7 @@ def test_recordings():
     app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
     rec = library.folder("recordings") / "2026-10-22_001217_fm1.wav"
     rec.write_bytes(b"RIFF" + bytes(40) + bytes(192000 * 5))           # 5 seconds
-    app.screen = "library"
-    app.lib_cursor = [r[0] for r in app.library_rows()].index("recording")
+    at_row(app, None, "recording")
     keys(app, "press")
     assert app.screen == "pick" and app.pick["title"] == "Recordings" and app.pick["items"][0][:2] == ("10-22 00:12", "0:05")
     snap(app, "recordings-pick")
@@ -353,13 +402,13 @@ def test_recordings():
         app.player.started -= 2
         snap(app, "player")
         keys(app, "press")                                 # stop
-        assert app.screen == "library" and not app.player.playing()
+        assert app.screen == "settings" and not app.player.playing()
         fake.seconds = 0                                   # plays to the end: back to the Library by itself
         app.player.start("bluez_output.jbl", rec)
         app.screen = "player"
         app.player.proc.wait()
         app.render(force=True)
-        assert app.screen == "library" and "end" in app.message
+        assert app.screen == "settings" and "end" in app.message
     finally:
         meters.subprocess.Popen = FakePwPlay.real
     app.sink = None                                        # no speaker: says so
@@ -377,21 +426,20 @@ def test_recordings():
     keys(app, "press")
     assert rec.exists()                                    # a short press doesn't delete
     keys(app, "press!")
-    assert not rec.exists() and app.screen == "library"
+    assert not rec.exists() and app.screen == "settings"
 
 
 def test_midi_matrix():
     app = make_app()
     app.midi = FakeMidi()
-    app.screen, app.settings_menu = "settings", "more"
-    app.setting = [row[0] for row in app.settings_rows()].index("routes")
+    at_row(app, "midi", "routes")
     app.on_key("press")
     assert app.screen == "matrix"
     snap(app, "matrix")
     app.on_key("right")
     app.on_key("left")
     app.on_key("left")
-    assert app.screen == "settings" and app.settings_menu == "more"     # left from the first column: back
+    assert app.screen == "settings" and app.settings_menu == "midi"     # left from the first column: back
     app.on_key("press")
     app.on_key("press")                                   # BT > FM-1
     assert app.screen == "route" and app.route_key == "BT>FM-1"
@@ -446,8 +494,8 @@ def test_midi_matrix():
 def test_arp_rows_and_presets():
     app = make_app()
     app.midi = FakeMidi()
-    # the quick switches: Arp and Chord on Settings' top list, for the keyboard's route
-    app.screen, app.settings_menu = "settings", None
+    # the quick switches: Arp and Chord in Settings > Playing, for the keyboard's route
+    app.screen, app.settings_menu = "settings", "play"
     rows = [r[0] for r in app.settings_rows()]
     assert rows[3:5] == ["arp_on", "chord_on"]
     app.setting = 3
@@ -471,8 +519,7 @@ def test_arp_rows_and_presets():
     assert [r[0] for r in app.route_rows()][-4:] == ["arp_on", "arp", "arp_rate", "arp_octaves"]
     snap(app, "route-arp")
     # presets: save this setup into 2, change it, load 2 back
-    app.screen, app.settings_menu = "settings", "more"
-    app.setting = [r[0] for r in app.settings_rows()].index("presets")
+    at_row(app, "midi", "presets")
     keys(app, "press")
     assert app.screen == "presets"
     keys(app, "down", "press")                               # preset 2 (empty): only Save here

@@ -2,7 +2,7 @@
 its channels, transpose, velocity curve and what to drop. The routing itself runs in the MIDI process
 (blemidi.Route); these screens edit state["routes"] and send it there.
 
-  Settings > MIDI routes:  the grid; joystick moves, press opens a route, left from the first column: back
+  Settings > MIDI > MIDI routes:  the grid; joystick moves, press opens a route, left from the first column: back
   a route's page:          up/down rows; press changes (on/off), or starts editing (up/down, then press/left)
   Channels > custom:       16 rows, input channel -> output channel or off
   Settings > MIDI > Route presets: four slots; press: Load / Save here / Clear
@@ -55,7 +55,7 @@ class MidiScreens:
         self.screen = "matrix"
 
     def keys_route(self):
-        """the keyboard's route: Bluetooth to the FM-1 (what Settings > MIDI's Arp and Chord switch)"""
+        """the keyboard's route: Bluetooth to the FM-1 (what Settings > Playing's Arp and Chord switch)"""
         return self.routes()["BT>FM-1"]
 
     def toggle_keys(self, name):

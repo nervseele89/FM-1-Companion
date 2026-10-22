@@ -91,29 +91,35 @@ Any key brings the full screen back; that key press does nothing else.
 Always shut down with **KEY3** (hold) before pulling the power. Pulling the power on a running Pi
 can lose recently changed files or corrupt the SD card.
 
-**Settings** (joystick right): what you change while playing first, one press away; what's set once under
-**More ›** (from the top, up goes straight to it). Left goes back.
+**Settings** (joystick right) is a short list of sections: **Playing**, **Audio** and **MIDI** work whatever
+you plug in; **Recordings** opens your takes; **Wi-Fi** switches the radio; **Sloop** is what needs SLOOP's
+editor protocol and **FM-1** what needs the FM-1 itself. Press opens a section, left goes back. Holding up
+or down repeats, faster after a second and a half.
 
 ![Settings](../docs/images/screen-settings.png)
 
 | Setting | What it does |
 |---|---|
-| **Metronome** on/off | A click on the speaker in time with the clock (MIDI clock, below). |
-| **Tempo** | The box's tempo: press, then up/down (hold to go faster); left when done. Tap tempo on the status screen sets it too. |
-| **Clock** follow / box | *follow*: pass on incoming clock and show its tempo. *box*: the box sends its own clock (and keeps other clock out). |
-| **Arp** on/off | The keyboard's arpeggiator (below). |
-| **Chord** on/off | The keyboard's chord memory: each key plays a chord (below). |
-| **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
-| **Library ›** | Backups, projects, samples, recordings and firmware (below). |
-| **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
-| **More ›** | |
+| **Playing ›** | |
+| · **Metronome** on/off | A click on the speaker in time with the clock (MIDI clock, below). |
+| · **Tempo** | The box's tempo: press, then up/down (hold to go faster); left when done. Tap tempo on the status screen sets it too. |
+| · **Clock** follow / box | *follow*: pass on incoming clock and show its tempo. *box*: the box sends its own clock (and keeps other clock out). |
+| · **Arp** on/off | The keyboard's arpeggiator (below). |
+| · **Chord** on/off | The keyboard's chord memory: each key plays a chord (below). |
+| · **Click level** | The metronome's volume: low, mid, high. |
+| **Audio ›** | |
+| · **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
 | · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
 | · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). |
-| · **Click level** | The metronome's volume: low, mid, high. |
+| **MIDI ›** | |
 | · **BLE MIDI** on/off | Shows or hides "FM-1 Bridge" to MIDI apps. It's remembered. |
 | · **Pairing** | Opens a 2-minute window in which a device can pair with the bridge. Only needed on systems that want to pair first (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
+| **Recordings ›** | Takes recorded on the box: play one, resample it into a slot, or delete it (see Recording). |
+| **Wi-Fi** on/off | Switches the Wi-Fi radio. It's remembered across reboots. With Wi-Fi off, SSH is unavailable. |
+| **Sloop ›** | Backups, projects, samples and the sample level: SLOOP 2.3+ (below). |
+| **FM-1 ›** | What the FM-1 runs, and installing firmware (below). |
 
 ### Headphones
 
@@ -131,7 +137,7 @@ Connect from your device's MIDI app; you don't pair through the system Bluetooth
   **FM-1 Bridge** → *Connect*.
 - **Android:** use an app that supports Bluetooth MIDI (for example *MIDI BLE Connect*), then your
   music app.
-- **Windows:** open Settings → More › **Pairing** on the bridge, then pair "FM-1 Bridge" in Windows'
+- **Windows:** open Settings → MIDI › **Pairing** on the bridge, then pair "FM-1 Bridge" in Windows'
   Bluetooth settings within 2 minutes. Whether a Windows music app can use Bluetooth MIDI depends on
   the app.
 
@@ -185,7 +191,7 @@ The status screen's bottom right shows the clock:
 - **Following a keyboard's clock** (for example the SMK-37 with its clock out on, while its transport runs):
   the tempo and beat grid are fitted to the last 48 ticks, so the bunching of Bluetooth packets doesn't make
   the beat wobble.
-- **Metronome** (Settings → Metronome, level under More › Click level): a click on the speaker on every
+- **Metronome** (Settings → Playing › Metronome, its level under Click level): a click on the speaker on every
   beat, higher on beat 1, in time with whichever clock runs. It only plays while a speaker is connected and
   there's a clock (in *follow* with nothing coming in, it's silent).
 - **Beat meter:** the tempo, flashing on the beat, and the beat in the bar.
@@ -195,7 +201,7 @@ The status screen's bottom right shows the clock:
 
 ### MIDI matrix
 
-Settings → More › **MIDI routes**:
+Settings → MIDI › **MIDI routes**:
 
 ![MIDI routes](../docs/images/screen-matrix.png)
 
@@ -240,20 +246,25 @@ the box refuses to put a SLOOP backup or project onto Clipper, or the other way 
 wavetable slots instead of sample slots (use Clipper's web editor for those). Backing up and restoring
 Clipper's own data works the same way as SLOOP's.
 
-**On the box:** Settings → **Library**:
+**On the box:** Settings → **Sloop ›** (what needs SLOOP's editor protocol) and **FM-1 ›** (the FM-1
+itself, whatever it runs). Recordings has its own row on Settings.
 
-![Library](../docs/images/screen-library.png)
+![Sloop](../docs/images/screen-settings-sloop.png)
 
-| Item | What it does |
+| Sloop › | What it does |
 |---|---|
 | **Back up now** | Saves everything on the FM-1: the working project, projects A–D, settings, user presets, the FM6 bank, the SYN drum kits, the MIDI map, the theme and the four sample slots. |
 | **Restore ›** | Pick a backup; it replaces what's on the FM-1. |
 | **Load project ›** | Pick a project file, or a project inside any backup, then where it goes: the working project or A–D. |
 | **Load sample ›** | Pick a WAV, then a slot (USR1–4). |
-| **Recordings ›** | Takes recorded on the box: play one, resample it into a slot, or delete it (see Recording). |
-| **Firmware ›** | Pick a firmware file to install. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
-| **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
+| **Sample level** | How loud samples are made when they're loaded: **-6 dB** (leaves room in the mix), **-3 dB** or **full**. |
 | **Auto backup** | Press to choose: **off**, **at start**, or every **2**, **5**, **10** or **30 min**. Remembered. |
+| **Import SD card** | Copies new files from the SD card's `fm1-library` folder (below). |
+
+| FM-1 › | What it does |
+|---|---|
+| **Runs** | The firmware on the FM-1 (SLOOP 2.8, say), as the FM-1 reports it. |
+| **Install firmware ›** | Pick a firmware file to install. With Wi-Fi on, **Get SLOOP update** and **Get Clipper (exp.)** download the newest release from GitHub first. |
 
 ![Job screen](../docs/images/screen-job.png)
 

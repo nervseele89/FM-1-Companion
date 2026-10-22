@@ -393,7 +393,7 @@ SETTINGS = Path(os.environ.get("FM1_SETTINGS") or Path.home() / ".config" / "fm1
 
 
 def sample_peak():
-    """the box's Sample level setting (Settings > More), as a peak value; -6 dB if it isn't set"""
+    """the box's Sample level setting (Settings > Sloop), as a peak value; -6 dB if it isn't set"""
     try:
         level = json.loads(SETTINGS.read_text()).get("sample_level", "-6 dB")
     except (OSError, ValueError):

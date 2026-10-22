@@ -27,7 +27,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import library
-from libui import LibraryScreens
+from libui import LIBRARY_KEYS, LibraryScreens
 import meters
 from meters import MeterScreens
 from midiui import MidiScreens
@@ -35,6 +35,7 @@ from weblink import WebLink
 
 STATE_FILE = Path.home() / ".config" / "fm1-bridge" / "fm1-bridge.json"
 DEFAULTS = {
+    "fw_label": None,       # what the FM-1 last said it runs ("SLOOP 2.8"): shown until it's asked again
     "rotate": 0,            # 180 if the screen is upside down
     "contrast": 128,
     "last_mac": None,
@@ -60,7 +61,11 @@ SCAN_SECONDS = 10
 TAP_GAP = 2.0                           # seconds: a longer pause between taps starts a new tap tempo
 BPM_RANGE = (30, 300)
 RECONNECT_EVERY = 20
-GROUPS = {"g_more": ("more", "More")}   # Settings' one sub-list: what's set once and left
+GROUPS = {"g_play": ("play", "Playing"),   # Settings' sections: (row key) -> (settings_menu, title). The first
+          "g_audio": ("audio", "Audio"),    # three work whatever you plug in; Sloop is what needs SLOOP's
+          "g_midi": ("midi", "MIDI"),       # editor protocol, FM-1 what needs the FM-1 itself (its firmware)
+          "g_sloop": ("sloop", "Sloop"),
+          "g_fm1": ("fm1", "FM-1")}
 ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]|[\x01\x02]")
 UNNAMED = re.compile(r"[0-9A-F]{2}(-[0-9A-F]{2}){5}")
 
@@ -388,7 +393,7 @@ class KeyTimer:
     on release, post(name, True) once held long enough, and up/down repeating while held."""
 
     HOLD = {"key2": 1.2, "key3": 3.0, "up": 0.4, "down": 0.4, "press": 2.0}    # press held: confirm
-    REPEAT = 0.2
+    REPEAT, FAST, FAST_AFTER = 0.2, 0.08, 1.5   # up/down held: 5 a second, faster after 1.5 s
 
     def __init__(self, post):
         self.post, self.down = post, {}
@@ -410,7 +415,7 @@ class KeyTimer:
                 info["held"], info["next"] = True, now + self.REPEAT
                 self.post(name, True) if name in ("key2", "key3", "press") else self.post(name)
             elif name in ("up", "down") and info["held"] and now >= info["next"]:
-                info["next"] = now + self.REPEAT
+                info["next"] = now + (self.FAST if now - info["at"] >= self.FAST_AFTER else self.REPEAT)
                 self.post(name)
 
     def timeout(self):
@@ -526,6 +531,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
         self.volume = None
         self.volume_lock = threading.Lock()   # one wpctl at a time, the newest press wins
         self.volume_job, self.volume_busy, self.volume_at = None, False, 0.0
+        self.volume_shown = 0.0               # until when the big volume bar shows
         self.auto = True                      # reconnect the last headphones by itself
         self.connecting = False
         self.screen = "status"                # or "scan", "settings"
@@ -534,7 +540,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
         self.midi = None                      # blemidi.MidiBridge, when BlueZ and mido are there
         self.wifi, self.next_wifi = None, 0.0
         self.setting = 0                      # cursor on the settings page
-        self.settings_menu = None             # None: the top list; "audio", "midi" or "clock": a group
+        self.settings_menu = None             # None: the top list of sections; else a section (GROUPS)
         self.flash_paused = False
         self.no_source_since, self.healed_at = None, -1e9
         self.busy = None                      # text shown while a user action runs
@@ -710,6 +716,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             threading.Thread(target=change_volume, args=(self.sink["id"], step), daemon=True).start()
             return
         self.volume_to(volume_snap(self.volume, step))
+        self.volume_shown = time.monotonic() + 1.2      # the big volume bar
 
     def volume_to(self, percent):
         """the speaker's volume, from the keys or the web page: shown at once, set in the background"""
@@ -739,24 +746,33 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
         rate = f"{self.state['audio_rate'] / 1000:g} kHz"
         tempo = f"{self.state['bpm']} BPM"
         onoff = lambda on: "on" if on else "off"      # noqa: E731
-        if self.settings_menu == "more":
-            return [("audio", "BT audio", audio), ("rate", "Audio rate", rate), ("click", "Click level", self.state["click"]),
-                    ("sample_level", "Sample level", self.state["sample_level"]),
-                    ("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+        if self.settings_menu == "sloop":     # SLOOP 2.3+'s editor protocol
+            return [("backup", "Back up now", ""), ("restore", "Restore", "›"), ("project", "Load project", "›"),
+                    ("sample", "Load sample", "›"), ("sample_level", "Sample level", self.state["sample_level"]),
+                    ("auto", "Auto backup", self.auto_label(self.auto_mode())), ("sd", "Import SD card", "")]
+        if self.settings_menu == "fm1":       # the FM-1 itself, whatever it runs
+            return [("fw_info", "Runs", self.fw_label or "?"), ("firmware", "Install firmware", "›")]
+        if self.settings_menu == "play":      # what changes while playing
+            keys = self.keys_route()
+            return [("metronome", "Metronome", onoff(self.state["metronome"])),
+                    ("tempo", "Tempo", f"± {tempo}" if self.editing == "tempo" else tempo),
+                    ("clock", "Clock", self.state["clock_mode"]), ("arp_on", "Arp", onoff(keys["arp_on"])),
+                    ("chord_on", "Chord", onoff(keys["chord_on"])), ("click", "Click level", self.state["click"])]
+        if self.settings_menu == "audio":
+            return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
+        if self.settings_menu == "midi":
+            return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
                     ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
-        keys = self.keys_route()
-        return [("metronome", "Metronome", onoff(self.state["metronome"])),      # what changes while playing
-                ("tempo", "Tempo", f"± {tempo}" if self.editing == "tempo" else tempo),
-                ("clock", "Clock", self.state["clock_mode"]), ("arp_on", "Arp", onoff(keys["arp_on"])),
-                ("chord_on", "Chord", onoff(keys["chord_on"])), ("speaker", "Speaker", speaker),
-                ("library", "Library", "›"), ("wifi", "Wi-Fi", wifi), ("g_more", "More", "›")]
+        return [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
+                ("recording", "Recordings", "›"), ("wifi", "Wi-Fi", wifi), ("g_sloop", "Sloop", "›"),
+                ("g_fm1", "FM-1", "›")]
 
     def change_setting(self):
         key = self.settings_rows()[self.setting][0]
         if key in GROUPS:
             self.settings_menu, self.setting = GROUPS[key][0], 0
-        elif key == "library":
-            self.open_library()
+        elif key in LIBRARY_KEYS:
+            self.library_choose(key)
         elif key == "speaker" or (key == "audio" and not self.state["last_mac"]):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
@@ -941,7 +957,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
         return (self.screen, self.busy and (self.busy, int(now * 2) % 4),
                 self.message if now < self.message_until else None, self.loop.running(),
                 self.source and self.source["label"], self.fw_label, self.sink and self.sink["label"], self.connecting,
-                self.state["last_name"], self.auto, self.volume,
+                self.state["last_name"], self.auto, self.volume, now < self.volume_shown,
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4), self.clock_text(),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
                 tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting, self.settings_menu,
@@ -958,12 +974,14 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
         if self.mode == "saver" and not force:
             self.draw_saver(d, now)
         else:
-            {"scan": self.draw_scan, "settings": self.draw_settings, "library": self.draw_library,
+            {"scan": self.draw_scan, "settings": self.draw_settings,
              "pick": self.draw_pick, "confirm": self.draw_confirm, "job": self.draw_job,
              "meter": lambda d: None, "matrix": self.draw_matrix, "route": self.draw_route,
              "player": self.draw_player,
              "chanmap": self.draw_chanmap, "presets": self.draw_presets}.get(
                 self.screen, self.draw_status)(d)
+            if self.screen == "status" and now < self.volume_shown and self.volume is not None:
+                self.draw_volume(d)
             if self.busy:
                 dots = "." * (int(now * 2) % 4)
                 self.draw_box(d, self.busy + dots)
@@ -1033,6 +1051,15 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             return "off"
         usb = "" if self.midi.usb_label() else " (no FM-1)"
         return (self.midi.peer + usb) if self.midi.peer else "waiting" + usb
+
+    def draw_volume(self, d):
+        """the volume, big, over the home screen for a moment after up/down"""
+        d.rectangle((6, 15, 121, 51), fill=0, outline=1)
+        text = f"Volume {self.volume}%"
+        d.text(((128 - d.textlength(text, font=self.f_body)) / 2, 18), text, font=self.f_body, fill=1)
+        d.rectangle((12, 34, 115, 46), outline=1)
+        if self.volume:
+            d.rectangle((14, 36, 14 + round(99 * self.volume / 100), 44), fill=1)
 
     def draw_settings(self, d):
         rows = self.settings_rows()

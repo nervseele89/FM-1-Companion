@@ -105,8 +105,17 @@ def scenes(app):
     def settings():
         app.screen, app.setting = "settings", 0
 
-    def settings_more():
-        app.screen, app.setting, app.settings_menu = "settings", 5, "more"
+    def settings_play():
+        app.screen, app.setting, app.settings_menu = "settings", 0, "play"
+
+    def settings_sloop():
+        app.screen, app.setting, app.settings_menu = "settings", 0, "sloop"
+
+    def settings_fm1():
+        app.screen, app.setting, app.settings_menu, app.fw_label = "settings", 0, "fm1", "SLOOP 2.8"
+
+    def volume():
+        app.volume, app.volume_shown = 64, time.monotonic() + 60
 
     def matrix():
         app.screen, app.mx = "matrix", [0, 0]
@@ -117,9 +126,6 @@ def scenes(app):
         routes["BT>FM-1"].update(transpose=12, velocity="soft")
         app.state["routes"] = routes
         app.screen, app.route_key, app.route_row = "route", "BT>FM-1", 2
-
-    def library():
-        app.screen, app.lib_cursor = "library", 0
 
     def recordings():
         import library as lib
@@ -147,8 +153,9 @@ def scenes(app):
         app.mode = "saver"
 
     return [("status", status), ("status-rec", recording), ("settings", settings),
-            ("settings-more", settings_more), ("matrix", matrix), ("route", route), ("speakers", speakers),
-            ("pairing", pairing), ("screensaver", saver), ("library", library), ("recordings", recordings),
+            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("status-volume", volume),
+            ("matrix", matrix), ("route", route), ("speakers", speakers),
+            ("pairing", pairing), ("screensaver", saver), ("recordings", recordings),
             ("player", player), ("job", job)]
 
 

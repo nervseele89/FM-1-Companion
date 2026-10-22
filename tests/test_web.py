@@ -23,8 +23,8 @@ import sloop  # noqa: E402
 import web  # noqa: E402
 from test_library import write_wav  # noqa: E402
 
-PORT = 8765
-BASE = f"http://127.0.0.1:{PORT}"           # not "localhost": Windows tries IPv6 first, 2 s a request
+PORT = 8765 if "--serve" in sys.argv else 0     # 0: any free port (a fixed one clashes with a preview server)
+BASE = ""                                   # set by setup(); 127.0.0.1, not "localhost": Windows tries IPv6 first
 
 
 def call(path, body=None, raw=None):
@@ -45,7 +45,9 @@ def jcall(path, body=None, raw=None):
 def setup():
     fake = fake_fm1.FakeFM1()
     library.write_backup(sloop.Sloop(sloop.Link(mido=fake, time_scale=0.02)).backup(), "auto")
+    global BASE
     server = web.ThreadingHTTPServer(("127.0.0.1", PORT), web.Handler)
+    BASE = f"http://127.0.0.1:{server.server_address[1]}"
     threading.Thread(target=server.serve_forever, daemon=True).start()
     return server
 
