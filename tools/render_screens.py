@@ -112,7 +112,7 @@ def scenes(app):
         app.screen, app.setting, app.settings_menu = "settings", 0, "sloop"
 
     def settings_fm1():
-        app.screen, app.setting, app.settings_menu, app.fw_label = "settings", 0, "fm1", "SLOOP 2.8"
+        app.screen, app.setting, app.settings_menu = "settings", 0, "fm1"
 
     def volume():
         app.volume, app.volume_shown = 64, time.monotonic() + 60
@@ -175,6 +175,7 @@ def main():
         app = bridge.App(display, dict(state))
         app.loop, app.midi, app.wifi = Loop(), Midi(), False
         app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
+        app.fw_label = "SLOOP 2.8"          # what the FM-1 says it runs: IN shows this, not its USB name
         app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
         app.volume = 75
         app.library_state = lambda now=None: None     # no library job (whatever this computer has)
@@ -231,6 +232,7 @@ def meters_sheet(state, out):
         app = bridge.App(display, dict(state, meter=i))
         app.loop, app.midi, app.wifi = Loop(), Midi(), False
         app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
+        app.fw_label = "SLOOP 2.8"          # what the FM-1 says it runs: IN shows this, not its USB name
         app.levels = Levels()
         app.library_state = lambda now=None: None
         app.midi = Midi()
