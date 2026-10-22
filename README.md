@@ -1,5 +1,11 @@
 # FM-1 Sloop/Felucca Companion Device
 
+[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://github.com/nervseele89/FM-1-Sloop-Falucca-Companion-Device/raw/main/docs/video/fm1-bridge-demo.mp4)
+
+**[▶ Watch the demo](https://github.com/nervseele89/FM-1-Sloop-Falucca-Companion-Device/raw/main/docs/video/fm1-bridge-demo.mp4)**
+(1:46, with sound): the box's own screens, all eleven meters, settings, the MIDI matrix and the library,
+with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
+
 ![The bridge: a Pi Zero W with the Waveshare OLED HAT, streaming the FM-1 to a JBL Go 3](docs/images/device.jpg)
 
 A small Bluetooth box for the **M-VAVE FM-1** pocket synth running custom firmware such as
