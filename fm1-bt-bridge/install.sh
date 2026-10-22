@@ -18,7 +18,7 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
     pipewire wireplumber libspa-0.2-bluetooth dbus-user-session rtkit bluez \
     python3-pil python3-spidev python3-libgpiod fonts-dejavu-core \
-    python3-dbus python3-gi python3-mido python3-rtmidi
+    python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy
 
 echo "== Enabling SPI for the OLED HAT, Bluetooth, and permissions"
 sudo raspi-config nonint do_spi 0
@@ -46,6 +46,7 @@ install -D -m 755 "$DIR/bridge.py"                              ~/.local/share/f
 install -D -m 644 "$DIR/blemidi.py"                             ~/.local/share/fm1-bridge/blemidi.py
 install -D -m 644 "$DIR/sloop.py"                               ~/.local/share/fm1-bridge/sloop.py
 install -D -m 644 "$DIR/libui.py"                               ~/.local/share/fm1-bridge/libui.py
+install -D -m 644 "$DIR/meters.py"                              ~/.local/share/fm1-bridge/meters.py
 install -D -m 755 "$DIR/library.py"                             ~/.local/share/fm1-bridge/library.py
 install -D -m 755 "$DIR/web.py"                                 ~/.local/share/fm1-bridge/web.py
 mkdir -p ~/.local/share/fm1-bridge/vendor/sloop ~/fm1-library/backups ~/fm1-library/projects \
@@ -60,6 +61,15 @@ else                                                                            
 fi
 install -D -m 644 "$DIR/config/fm1-bridge.service"              ~/.config/systemd/user/fm1-bridge.service
 install -D -m 644 "$DIR/config/fm1-web.service"                 ~/.config/systemd/user/fm1-web.service
+
+echo "== Booting faster (a Zero W on Trixie otherwise takes ~3 minutes before the bridge starts)"
+# cloud-init only applies Raspberry Pi Imager's settings on the first boot, but costs ~40 s on every boot
+sudo touch /etc/cloud/cloud-init.disabled
+# start the user services (PipeWire, the bridge) without waiting for NetworkManager
+sudo install -m 644 "$DIR/config/systemd-user-sessions.service" /etc/systemd/system/systemd-user-sessions.service
+# swap in RAM only: the default file-backed swap is rebuilt on every boot (~20 s)
+sudo install -D -m 644 "$DIR/config/rpi-swap-50-fm1-bridge.conf" /etc/rpi/swap.conf.d/50-fm1-bridge.conf
+sudo systemctl daemon-reload
 
 echo "== Starting at boot without a login"
 sudo loginctl enable-linger "$USER"

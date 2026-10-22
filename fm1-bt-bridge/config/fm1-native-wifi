@@ -1,0 +1,69 @@
+#!/bin/sh
+# FM-1 bridge: move the Wi-Fi network from Raspberry Pi OS Trixie's netplan profiles to a native NetworkManager
+# profile. Trixie's NetworkManager runs "netplan generate" plus a systemd reload for each netplan profile at
+# start-up, ~25 s each on a Zero W (four of them here: Wi-Fi and an unused Ethernet). With no netplan profiles
+# left only one remains. See https://github.com/raspberrypi/trixie-feedback/issues/24
+#
+# Run with sudo. The Wi-Fi settings (password included) are copied from the current profile, never printed.
+# If the new profile doesn't connect, the old one is brought back and nothing is changed.
+# Undo: move the files in /root/fm1-netplan-backup back to /etc/netplan, delete
+# /etc/NetworkManager/system-connections/fm1-wifi.nmconnection, reboot.
+set -eu
+[ "$(id -u)" -eq 0 ] || { echo "run with sudo" >&2; exit 1; }
+log=/root/fm1-native-wifi.log
+exec >"$log" 2>&1                       # keep going even if this SSH session drops while Wi-Fi switches
+dest=/etc/NetworkManager/system-connections/fm1-wifi.nmconnection
+
+old=$(nmcli -t -f NAME,TYPE,ACTIVE connection show | awk -F: '$2=="802-11-wireless" && $3=="yes" {print $1; exit}')
+[ -n "$old" ] || { echo "no active Wi-Fi connection"; exit 1; }
+case "$old" in netplan-*) ;; *) echo "already native: $old"; exit 0 ;; esac
+ssid=$(nmcli -g 802-11-wireless.ssid connection show "$old")
+psk=$(nmcli -s -g 802-11-wireless-security.psk connection show "$old")
+[ -n "$ssid" ] && [ -n "$psk" ] || { echo "could not read the Wi-Fi settings of $old"; exit 1; }
+
+loaded() {    # NetworkManager has fm1-wifi; a reload runs netplan and systemd reloads, minutes on a Zero W
+    n=0
+    until nmcli -t -f NAME connection show 2>/dev/null | grep -qx fm1-wifi; do
+        n=$((n + 1)); [ $n -lt 150 ] || return 1; sleep 2
+    done
+}
+
+umask 077
+[ -e "$dest" ] || cat >"$dest" <<EOF
+[connection]
+id=fm1-wifi
+uuid=$(cat /proc/sys/kernel/random/uuid)
+type=wifi
+interface-name=wlan0
+autoconnect=true
+
+[wifi]
+mode=infrastructure
+ssid=$ssid
+
+[wifi-security]
+key-mgmt=wpa-psk
+psk=$psk
+
+[ipv4]
+method=auto
+
+[ipv6]
+method=auto
+EOF
+chmod 600 "$dest"
+nmcli connection reload || true         # may time out while NetworkManager is busy: wait for it below
+
+if loaded && nmcli --wait 45 connection up fm1-wifi; then
+    mkdir -p /root/fm1-netplan-backup
+    mv /etc/netplan/90-NM-*.yaml /root/fm1-netplan-backup/ 2>/dev/null || true
+    sync
+    nmcli connection reload || true     # drops the netplan profiles (they also go at the next boot)
+    echo "OK: Wi-Fi now uses fm1-wifi; netplan profiles moved to /root/fm1-netplan-backup"
+else
+    rm -f "$dest"
+    nmcli connection reload || true
+    nmcli --wait 45 connection up "$old" || true
+    echo "FAILED: fm1-wifi did not connect; back on $old, nothing changed"
+    exit 1
+fi
