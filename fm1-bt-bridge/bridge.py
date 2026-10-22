@@ -232,6 +232,18 @@ def change_volume(node_id, step):
     run(["wpctl", "set-volume", "-l", "1.0", str(node_id), f"{abs(step)}%{'+' if step > 0 else '-'}"], timeout=5)
 
 
+def set_volume(node_id, percent):
+    run(["wpctl", "set-volume", str(node_id), f"{percent}%"], timeout=5)
+
+
+def volume_snap(volume, step):
+    """the next multiple of the step up or down from volume: 37 -> 38 or 36, 38 -> 40 or 36. Relative steps
+    drift (a Bluetooth speaker rounds its volume to 1/127ths); whole percents come back from it unchanged."""
+    size = abs(step)
+    target = (volume // size + 1) * size if step > 0 else (volume - 1) // size * size
+    return max(0, min(100, target))
+
+
 def alsa_has_card(source_match):
     """the FM-1's USB sound card is in /proc/asound/cards (whatever PipeWire thinks)"""
     try:
@@ -512,6 +524,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
         self.metro_sent = None                # what the MIDI process was last told about the metronome
         self.source = self.sink = None
         self.volume = None
+        self.volume_lock = threading.Lock()   # one wpctl at a time, the newest press wins
+        self.volume_job, self.volume_busy, self.volume_at = None, False, 0.0
         self.auto = True                      # reconnect the last headphones by itself
         self.connecting = False
         self.screen = "status"                # or "scan", "settings"
@@ -584,6 +598,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             self.midi.poll()
         source, sink = pw_nodes(self.state["source_match"])
         volume = get_volume(sink["id"]) if sink else None
+        if sink == self.sink and time.monotonic() - self.volume_at < 3:
+            volume = self.volume              # a reading from before the last press landed
         changed = (source, sink) != (self.source, self.sink)
         if changed or volume != self.volume:
             self.source, self.sink, self.volume = source, sink, volume
@@ -690,10 +706,28 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
     def volume_step(self, step):
         if not self.sink:
             return
-        node = self.sink["id"]
-        if self.volume is not None:
-            self.volume = max(0, min(100, self.volume + step))
-        threading.Thread(target=change_volume, args=(node, step), daemon=True).start()
+        if self.volume is None:               # not read yet: a relative step
+            threading.Thread(target=change_volume, args=(self.sink["id"], step), daemon=True).start()
+            return
+        self.volume_to(volume_snap(self.volume, step))
+
+    def volume_to(self, percent):
+        """the speaker's volume, from the keys or the web page: shown at once, set in the background"""
+        self.volume, self.volume_at = percent, time.monotonic()
+        with self.volume_lock:
+            self.volume_job = (self.sink["id"], percent)
+            start, self.volume_busy = not self.volume_busy, True
+        if start:
+            threading.Thread(target=self.volume_worker, daemon=True).start()
+
+    def volume_worker(self):
+        while True:
+            with self.volume_lock:
+                job, self.volume_job = self.volume_job, None
+                if job is None:
+                    self.volume_busy = False
+                    return
+            set_volume(*job)
 
     def settings_rows(self):
         """(key, label, value) for the settings page, in cursor order."""
@@ -845,7 +879,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, WebLink):
             elif key == "key2":
                 self.disconnect() if held else self.reconnect()
             elif key in ("up", "down"):
-                self.volume_step(5 if key == "up" else -5)
+                self.volume_step(2 if key == "up" else -2)
             elif key == "press":
                 self.start_stop() if held else self.tap(time.monotonic())
             elif key == "right":

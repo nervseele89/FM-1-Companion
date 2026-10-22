@@ -74,6 +74,15 @@ def setup_library():
     return backup
 
 
+def test_volume_steps():
+    """Up and down land on even steps (2 %), whatever the speaker had; a Bluetooth speaker's 1/127ths
+    round back to the same whole percent."""
+    snap = bridge.volume_snap
+    assert [snap(37, 2), snap(38, 2), snap(99, 2), snap(100, 2)] == [38, 40, 100, 100]
+    assert [snap(37, -2), snap(38, -2), snap(1, -2), snap(0, -2)] == [36, 36, 0, 0]
+    assert all(round(round(p * 1.27) / 1.27) == p for p in range(0, 101, 2))
+
+
 def test_flows():
     backup = setup_library()
     app = make_app()

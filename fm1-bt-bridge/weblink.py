@@ -5,8 +5,6 @@ writes the status about once a second when something changed (monitor thread) an
 main loop, so they go through the same code as the joystick. Writes to the FM-1's data (restore, loads,
 firmware) aren't commands: they still wait for a hold-press on the box (library.ask_box).
 """
-import subprocess
-import threading
 import time
 
 import blemidi
@@ -88,8 +86,7 @@ class WebLink:
                     self.toggle_keys(key)
                 return None                   # toggle_keys says it
             if key == "volume" and isinstance(value, int) and 0 <= value <= 100 and self.sink:
-                node, self.volume = self.sink["id"], value
-                threading.Thread(target=set_volume, args=(node, value), daemon=True).start()
+                self.volume_to(value)
                 return None
             raise ValueError(f"bad setting {key}")
         if cmd == "transport" and c.get("value") in ("start", "stop"):
@@ -112,10 +109,3 @@ class WebLink:
             self.preset_apply(c["slot"], c["action"], name if isinstance(name, str) else None)
             return None                       # preset_apply says it
         raise ValueError(f"bad command {cmd}")
-
-
-def set_volume(node_id, percent):
-    try:
-        subprocess.run(["wpctl", "set-volume", str(node_id), f"{percent}%"], capture_output=True, timeout=5)
-    except (OSError, subprocess.TimeoutExpired):
-        pass
