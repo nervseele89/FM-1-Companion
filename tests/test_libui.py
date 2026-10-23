@@ -163,7 +163,7 @@ def test_flows():
     keys(app, "left", "down", "press")                     # Audio ›
     assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]
     keys(app, "left", "down", "press")                     # MIDI ›
-    assert [r[0] for r in app.settings_rows()] == ["midi", "pairing", "routes", "presets"]
+    assert [r[0] for r in app.settings_rows()] == ["midi", "pairing", "usbkeys", "routes", "presets"]
     keys(app, "left", "up", "up")                          # back on Playing, the top
     assert app.settings_menu is None and app.setting == 0
     snap(app, "settings")
@@ -554,7 +554,7 @@ def test_midi_matrix():
     app.on_key("left")
     assert app.screen == "route" and app.route_rows()[1][2] == "custom ›"
     app.on_key("left")
-    app.mx = [2, 1]                                       # Box > BT: only on/off
+    app.mx = [3, 1]                                       # Box > BT: only on/off
     app.on_key("press")
     assert [r[0] for r in app.route_rows()] == ["on"]
     app.on_key("left")

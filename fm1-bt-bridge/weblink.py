@@ -26,7 +26,7 @@ class WebLink:
             "speaker": self.sink and self.sink["label"], "speaker_name": self.state["last_name"],
             "connecting": self.connecting, "volume": self.volume, "battery": self.battery,
             "midi": {"peer": midi and midi.peer, "enabled": bool(midi and midi.enabled), "usb": midi and midi.usb_label(),
-                     "error": midi and midi.error},
+                     "error": midi and midi.error, "controllers": list(getattr(midi, "controllers", None) or [])},
             "clock": clock, "clock_text": self.clock_text(),
             "recording": int(self.recorder.seconds()) if self.recorder.recording() else None,
             "settings": dict({k: self.state[k] for k in SETTINGS}, arp_on=keys["arp_on"], chord_on=keys["chord_on"],

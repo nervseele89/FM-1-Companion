@@ -12,7 +12,7 @@ import time
 
 import blemidi
 
-SOURCE_NAMES = {"BT": "Bluetooth", "FM-1": "FM-1", "Box": "Box clock"}
+SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "FM-1": "FM-1", "Box": "Box clock"}
 VELOCITY = ["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
 CHANNELS = ["same"] + list(range(16)) + ["custom"]      # all to one channel (0-15), or a table
 CYCLES = {"chord": list(blemidi.CHORDS), "arp": list(blemidi.ARPS), "arp_rate": list(blemidi.ARP_RATES),
@@ -31,7 +31,7 @@ class MidiScreens:
 
     def routes(self):
         saved = self.state.get("routes") or {}
-        return {key: dict(blemidi.DEFAULT_ROUTE, **saved.get(key, {})) for key in blemidi.ROUTES}
+        return {key: dict(blemidi.route_default(key), **saved.get(key, {})) for key in blemidi.ROUTES}
 
     def route(self):
         return self.routes()[self.route_key]
@@ -55,12 +55,14 @@ class MidiScreens:
         self.screen = "matrix"
 
     def keys_route(self):
-        """the keyboard's route: Bluetooth to the FM-1 (what Settings > Playing's Arp and Chord switch)"""
+        """the keyboard's route: Bluetooth to the FM-1 (what Settings > Playing's Arp and Chord switch, there and on
+        USB keys to the FM-1 alike)"""
         return self.routes()["BT>FM-1"]
 
     def toggle_keys(self, name):
         on = not self.keys_route()[name]
         self.set_route_of("BT>FM-1", **{name: on})
+        self.set_route_of("USB>FM-1", **{name: on})
         r = self.keys_route()
         what = f"Arp {r['arp']} {r['arp_rate']}" if name == "arp_on" else f"Chord {r['chord']}"
         self.say(f"{what}: {'on' if on else 'off'}", 1.5)
@@ -239,26 +241,25 @@ class MidiScreens:
     # ---- drawing
 
     def draw_matrix(self, d):
-        d.text((0, 0), "MIDI routes", font=self.f_title, fill=1)
-        d.text((127 - d.textlength("< back", font=self.f_small), 2), "< back", font=self.f_small, fill=1)
-        d.line((0, 14, 127, 14), fill=1)
-        cols = (68, 104)
+        d.text((0, 0), "Routes", font=self.f_title, fill=1)            # four sources: the columns go up here
+        cols = (58, 82, 106)
         for x, dest in zip(cols, blemidi.DESTINATIONS):
             w = d.textlength(dest, font=self.f_small)
-            d.text((x + 6 - w / 2, 15), dest, font=self.f_small, fill=1)
+            d.text((x + 6 - w / 2, 2), dest, font=self.f_small, fill=1)
+        d.line((0, 13, 127, 13), fill=1)
         routes = self.routes()
         for row, source in enumerate(blemidi.SOURCES):
-            y = 29 + row * 11
+            y = 18 + row * 12
             d.text((0, y - 1), SOURCE_NAMES[source], font=self.f_small, fill=1)
             for col, (x, dest) in enumerate(zip(cols, blemidi.DESTINATIONS)):
                 if source == dest:
-                    d.line((x + 3, y + 4, x + 9, y + 4), fill=1)          # no route to itself
+                    d.line((x + 3, y + 3, x + 9, y + 3), fill=1)          # no route to itself
                 elif routes[f"{source}>{dest}"]["on"]:
-                    d.rectangle((x, y, x + 12, y + 8), fill=1)
+                    d.rectangle((x, y, x + 12, y + 6), fill=1)
                 else:
-                    d.rectangle((x, y, x + 12, y + 8), outline=1)
+                    d.rectangle((x, y, x + 12, y + 6), outline=1)
                 if [row, col] == self.mx:
-                    d.rectangle((x - 3, y - 2, x + 15, y + 10), outline=1)
+                    d.rectangle((x - 3, y - 2, x + 15, y + 8), outline=1)
 
     def draw_rows(self, d, title, rows, cursor, editing, hint):
         """a scrolling list of (label, value) rows like Settings; the edited value marked with ±"""

@@ -26,6 +26,14 @@ sudo raspi-config nonint do_i2c 0       # a PiSugar 3 battery, if there's one, a
 sudo rfkill unblock bluetooth || true
 sudo systemctl enable --now bluetooth
 sudo usermod -aG bluetooth,gpio,spi,i2c,audio "$USER"
+# USB at full speed: the Zero's USB can't drive a USB 2 hub at high speed (devices behind it time out), and the
+# FM-1 and USB keyboards are full-speed devices anyway. Takes effect at the next boot.
+CMDLINE=/boot/firmware/cmdline.txt
+[ -f "$CMDLINE" ] || CMDLINE=/boot/cmdline.txt
+if ! grep -q "dwc_otg.speed=1" "$CMDLINE"; then
+    sudo cp "$CMDLINE" "$CMDLINE.bak"
+    sudo sed -i '1 s/$/ dwc_otg.speed=1/' "$CMDLINE"
+fi
 
 echo "== Letting the bridge shut down, switch Wi-Fi and copy backups to the SD card without a password"
 sudo install -m 755 "$DIR/config/fm1-sd-sync" /usr/local/sbin/fm1-sd-sync

@@ -18,13 +18,15 @@ own screen and joystick or from your phone.
 - **Wireless audio and MIDI:** the FM-1 plays on Bluetooth headphones or a speaker, and the box shows up
   as a Bluetooth MIDI device, **"FM-1 Companion"**, so a keyboard, iPad, phone or computer can play the FM-1
   and hear back what it sends.
+- **USB keyboards:** put a USB hub between the box and the FM-1 and plug in up to four USB MIDI keyboards
+  or controllers. They're found by themselves and play the FM-1 straight away.
 - **A recorder and a sample editor:** record the FM-1 to WAV from the box, play takes back on the speaker,
   and edit a take (or any sample) into a new sample: trim it, fade it, normalize or reverse it, and tune it
   to the note it plays, ready to load into the FM-1.
 - **Playing tools:** a MIDI clock (follow your keyboard's clock, or be the master with tap tempo and
   Start/Stop), a metronome, an arpeggiator and chord memory.
-- **A MIDI matrix:** route the keyboard, the FM-1 and the box to each other; transpose, re-channel,
-  reshape velocity and filter, with four presets.
+- **A MIDI matrix:** route Bluetooth, USB keyboards, the FM-1 and the box to each other; transpose,
+  re-channel, reshape velocity and filter, with four presets.
 - **Eleven meters:** level bars, VU needles, spectrum, scope, a reel-to-reel tape deck, a tuner, a MIDI
   keyboard view, a waterfall, a stereo goniometer, a level history and a beat counter.
 - **Looks after the FM-1 (SLOOP 2.3+):** back up and restore everything on it (by hand or automatically),
@@ -42,33 +44,53 @@ own screen and joystick or from your phone.
                             ┌── Bluetooth audio ──▶ headphones / speaker
                             ├◀── Bluetooth MIDI ──▶ keyboard / iPad / phone / Mac
 FM-1 ◀── USB ──▶ Pi Zero W ─┤
- (audio, MIDI, backups,     ├◀── Wi-Fi ───────────▶ web app on your phone
-  samples, firmware)        └── OLED + joystick: meters, recorder, sample editor
+ (audio, MIDI, backups,     ├◀── USB hub ─────────▶ USB MIDI keyboards
+  samples, firmware)        ├◀── Wi-Fi ───────────▶ web app on your phone
+                            └── OLED + joystick: meters, recorder, sample editor
 ```
 
 Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 and 2.8 on the FM-1, a JBL Go 3
-speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI (including its clock). The library was tested on
-the real FM-1 with a backup, a restore (read back byte for byte), a project load, a sample load and the
+speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI (including its clock) and over USB through an
+ASMedia ASM1074 USB hub. The library was tested on the real FM-1 with a backup, a restore (read back byte for byte), a project load, a sample load and the
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
-## What's new in v2.6
+## What's new in v2.7
+
+| A USB keyboard playing the FM-1 | The matrix, with USB |
+|---|---|
+| ![The home screen: MIDI SMK-37+VA](docs/images/screen-status.png) | ![MIDI routes: Bluetooth, USB keys, FM-1 and Box clock rows; FM-1, BT and USB columns](docs/images/screen-matrix.png) |
+| ![Settings › MIDI: USB keys 1](docs/images/screen-settings-midi.png) | |
+
+**New**
+- **USB MIDI keyboards:** plug a USB hub into the box, the FM-1 and up to four USB MIDI keyboards or
+  controllers into the hub, and the keyboards play the FM-1, no Bluetooth needed. They're found within a
+  few seconds of plugging in, and unplugging one is fine. Tested with an M-VAVE SMK-37.
+- **USB in the MIDI matrix:** a *USB keys* row and a *USB* column, with all the usual route options
+  (channels, transpose, velocity, filters, chord memory and the arpeggiator). USB keys → FM-1 is on at first;
+  sending to the keyboards, and USB keys → Bluetooth, are yours to switch on. The Arp and Chord quick
+  switches work for USB keyboards too.
+- **Where you see them:** the home screen names the keyboard ("SMK-37+VA", or "1 USB + …" next to a
+  Bluetooth device), Settings › MIDI › **USB keys** counts and lists them, and the web app shows them on its
+  status page and in its routes grid.
+- **The FM-1 is only ever found by its name** (or its USB ID), so a keyboard is never mistaken for it, and
+  with no FM-1 plugged in the box no longer picks up a keyboard's own audio as the FM-1's.
+
+**Good to know:** devices behind a USB 2 hub time out on the Pi Zero at high speed, so the installer now
+sets the box's USB to full speed, 12 Mbit/s (`dwc_otg.speed=1`, from the next boot); the FM-1 and USB
+keyboards are 12 Mbit/s devices anyway. A
+powered hub also feeds the FM-1 instead of the Pi, which ends the reboots when it's plugged in while running.
+
+<details><summary>Earlier: v2.6</summary>
+
+Runs on a [PiSugar 3](https://docs.pisugar.com/docs/product-wiki/battery/pisugar3/pisugar-3-series)
+battery, with its charge in the title bar and the web app, a warning at 15% and a safe shutdown at 5%; a new
+demo video; recordings warn when the FM-1 clipped (v2.6.2).
 
 | On battery | Plugged in |
 |---|---|
 | ![The box on battery: the gauge in the title bar reads 70](docs/images/device-battery.jpg) | ![Charging: a bolt in the battery](docs/images/screen-status-charging.png) |
-
-**New**
-- **Runs on a battery:** fit a [PiSugar 3](https://docs.pisugar.com/docs/product-wiki/battery/pisugar3/pisugar-3-series)
-  (1200 mAh) under the Pi Zero and the box shows its charge in the title bar, a battery with the percent next
-  to LIVE, and a charging bolt while it's plugged in. The web app shows it too.
-- **Looks after itself on battery:** a warning at 15%, and at 5% a safe shutdown (recordings are finished
-  first) before the battery cuts out and catches the SD card mid-write.
-- **A new demo video** at the top of this page, with the sectioned settings and the sample editor.
-
-**Good to know:** the FM-1 draws its power from the box over USB, so on battery the PiSugar feeds the
-synth as well, which shortens the run time a lot (see Known limits). Charge the FM-1 first; a way to cut
-the FM-1's power on battery is being worked out.
+</details>
 
 <details><summary>Earlier: v2.5</summary>
 
@@ -108,21 +130,23 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 | ![Status screen](docs/images/screen-status.png) | ![Recording](docs/images/screen-status-rec.png) |
 | **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume and the clock. LIVE means audio is flowing; the battery's charge is next to it. | **Recording:** REC and the time in place of LIVE. |
 | ![Settings](docs/images/screen-settings.png) | ![Playing](docs/images/screen-settings-play.png) |
-| **Settings** (joystick right): Playing, Audio, MIDI, Recordings, Sample editor, Wi-Fi, Sloop and FM-1. Press opens a section, left goes back. | **Playing ›:** Metronome, Tempo, Clock, Arp, Chord and the click level. **Audio ›** has the speaker and the audio rate; **MIDI ›** Bluetooth MIDI, pairing, the routes and their presets. |
+| **Settings** (joystick right): Playing, Audio, MIDI, Recordings, Sample editor, Wi-Fi, Sloop and FM-1. Press opens a section, left goes back. | **Playing ›:** Metronome, Tempo, Clock, Arp, Chord and the click level. **Audio ›** has the speaker and the audio rate; **MIDI ›** is below. |
 | ![Sloop](docs/images/screen-settings-sloop.png) | ![FM-1](docs/images/screen-settings-fm1.png) |
 | **Sloop ›:** back up, restore, load a project or a sample, the sample level, auto backup, the SD card. Writes ask you to hold the joystick press for 2 seconds; restores and project loads back up first. | **FM-1 ›:** what the FM-1 runs, and installing firmware (SLOOP and Clipper download from GitHub with Wi-Fi on). |
-| ![MIDI routes](docs/images/screen-matrix.png) | ![A route](docs/images/screen-route.png) |
-| **MIDI routes:** a filled square is a route that's on. Press opens it. | **A route:** here the keyboard is played an octave up with a soft velocity curve. |
-| ![Volume](docs/images/screen-status-volume.png) | ![Firmware install](docs/images/screen-job.png) |
-| **Volume:** up/down on the home screen, in 2% steps, shown big for a moment. | **A job running:** here a SLOOP update, about 2 minutes. |
-| ![A recording](docs/images/screen-recordings.png) | ![Playing](docs/images/screen-player.png) |
-| **A recording:** play it, edit it as a sample, or delete it. | **Playing** a take on the speaker. |
-| ![Sample editor](docs/images/screen-editor.png) | ![The note](docs/images/screen-editor-note.png) |
-| **Sample editor:** the selection between two markers (outside it, dotted); left/right picks the field, up/down changes it, press plays it. The length is top right. | **Note:** the root note it found by listening (up/down changes it). It goes into the saved file's name so SLOOP plays the sample in tune. |
-| ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |
-| **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. | **Pairing**, then it's remembered and reconnects by itself. |
-| ![Screensaver](docs/images/screen-screensaver.png) | ![Starting](docs/images/screen-starting.png) |
-| **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. | **Starting:** shown as soon as the Companion opens the screen at boot, until the status screen is ready. |
+| ![MIDI](docs/images/screen-settings-midi.png) | ![MIDI routes](docs/images/screen-matrix.png) |
+| **MIDI ›:** Bluetooth MIDI, pairing, the USB keyboards plugged in (press lists them), the routes and their presets. | **MIDI routes:** rows are sources (Bluetooth, USB keyboards, the FM-1, the box's clock), columns destinations; a filled square is a route that's on. Press opens it. |
+| ![A route](docs/images/screen-route.png) | ![Volume](docs/images/screen-status-volume.png) |
+| **A route:** here the keyboard is played an octave up with a soft velocity curve. | **Volume:** up/down on the home screen, in 2% steps, shown big for a moment. |
+| ![Firmware install](docs/images/screen-job.png) | ![A recording](docs/images/screen-recordings.png) |
+| **A job running:** here a SLOOP update, about 2 minutes. | **A recording:** play it, edit it as a sample, or delete it. |
+| ![Playing](docs/images/screen-player.png) | ![Sample editor](docs/images/screen-editor.png) |
+| **Playing** a take on the speaker. | **Sample editor:** the selection between two markers (outside it, dotted); left/right picks the field, up/down changes it, press plays it. The length is top right. |
+| ![The note](docs/images/screen-editor-note.png) | ![Speaker list](docs/images/screen-speakers.png) |
+| **Note:** the root note it found by listening (up/down changes it). It goes into the saved file's name so SLOOP plays the sample in tune. | **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. |
+| ![Pairing](docs/images/screen-pairing.png) | ![Screensaver](docs/images/screen-screensaver.png) |
+| **Pairing**, then it's remembered and reconnects by itself. | **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. |
+| ![Starting](docs/images/screen-starting.png) |  |
+| **Starting:** shown as soon as the Companion opens the screen at boot, until the status screen is ready. |  |
 
 ### Meters
 
@@ -163,7 +187,7 @@ sudo reboot
 | Path | What it is |
 |---|---|
 | `fm1-bt-bridge/bridge.py` | The OLED app: status and settings screens, headphone pairing, audio routing (PipeWire), keys |
-| `fm1-bt-bridge/blemidi.py` | The Bluetooth LE MIDI service (BlueZ), its link to the FM-1's USB MIDI, the clock, the MIDI matrix with its arp and chord memory, and the metronome, in a process of its own |
+| `fm1-bt-bridge/blemidi.py` | The Bluetooth LE MIDI service (BlueZ), its link to the FM-1's USB MIDI and to USB keyboards, the clock, the MIDI matrix with its arp and chord memory, and the metronome, in a process of its own |
 | `fm1-bt-bridge/libui.py` | The Sloop and FM-1 settings, recordings and their screens on the box |
 | `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
 | `fm1-bt-bridge/midiui.py` | The MIDI matrix screens on the box |
@@ -196,6 +220,8 @@ sudo reboot
   master with the knob around half (or lower its track levels) for clean takes.
 - **Plugging the FM-1 in while the Pi is running can reboot the Pi.** The Zero's USB port has no
   current limit. Connect the FM-1 first, or use a powered USB hub.
+- **USB runs at 12 Mbit/s** so a hub works on the Pi Zero. Fine for MIDI and the FM-1's audio, but a
+  USB 2 device that needs high speed (a fast USB stick, say) is slower behind it.
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send
   each note in its own packet.
 - **Start-up still takes about a minute** on a Pi Zero W's single core; Wi-Fi comes up about 40 s

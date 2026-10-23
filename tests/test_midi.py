@@ -293,6 +293,50 @@ def test_notes_for_the_midi_meter():
     assert notes == [] and chans == 0
 
 
+class FakeControllers:
+    def __init__(self):
+        self.sent = []
+
+    def send_messages(self, messages):
+        self.sent.extend(messages)
+
+    def names(self):
+        return ["SMK-37+VA"]
+
+
+PORTS = ["Midi Through:Midi Through Port-0 14:0", "Felucca:Felucca MIDI 1 16:0", "SMK-37+VA:SMK-37+VA MIDI 1 20:0",
+         "RtMidiIn Client:RtMidiIn Client 129:0", "AA:BB:CC:DD:EE:FF:Bluetooth 128:0"]
+
+
+def test_a_usb_keyboard_is_never_the_fm1():
+    bridge = make_bridge()
+    usb = blemidi.UsbMidi(["fm-1", "felucca"], None)
+    assert usb.pick(PORTS) == "Felucca:Felucca MIDI 1 16:0"
+    assert usb.pick([p for p in PORTS if "Felucca" not in p]) is None      # no FM-1: no fallback to the keyboard
+    assert usb.pick(["Generic pid.codes Test PID:x 16:0"]) == "Generic pid.codes Test PID:x 16:0"
+    assert bridge.controllers.wanted(PORTS) == {"SMK-37+VA": "SMK-37+VA:SMK-37+VA MIDI 1 20:0"}
+
+
+def test_usb_keys_play_the_fm1():
+    bridge = make_bridge()
+    bridge.controllers = FakeControllers()
+    bridge.from_controllers(b"\x90\x3c\x40")
+    assert bridge.usb.sent == [b"\x90\x3c\x40"]                     # USB > FM-1 on at first
+    assert bridge.to_ble_sent == []                                    # USB > BT off at first
+    bridge.from_usb(b"\x90\x30\x40")
+    bridge.from_ble(ble_packet(b"\x90\x31\x40"), "/dev/keys")
+    assert bridge.controllers.sent == []                               # nothing to the keyboard at first
+    routes = blemidi.default_routes()
+    routes["USB>FM-1"]["transpose"] = 12
+    routes["FM-1>USB"]["on"] = True
+    bridge.set_routes(routes)
+    bridge.from_controllers(b"\x90\x3c\x40")
+    assert bridge.usb.sent[-1] == b"\x90\x48\x40"
+    bridge.from_usb(b"\x90\x30\x40")
+    assert bridge.controllers.sent == [b"\x90\x30\x40"]
+    assert {k for k, r in blemidi.default_routes().items() if not r["on"]} == set(blemidi.OFF_AT_FIRST)
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

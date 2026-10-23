@@ -47,6 +47,7 @@ class Midi:
     enabled, error, pairing_until, peer = True, None, 0.0, "SMK-37+VA_BLE"
     clock = {"bpm": 120, "tempo": 120.0, "source": "box", "playing": True, "bar": time.monotonic() - 0.55}
     notes, chans = [60, 64, 67], (1 << 0) | (1 << 9)     # a C major chord; channels 1 and 10 busy
+    controllers = ["SMK-37+VA"]                           # a USB keyboard on a hub
 
     def set_routes(self, routes):
         pass
@@ -98,6 +99,7 @@ def scenes(app):
     """(file name, how to set the app up) for each screen worth showing."""
     def status():
         app.battery = {"percent": 78, "mv": 3818, "plugged": False}
+        app.midi.peer = None                  # the SMK-37 on USB alone
 
     def charging():
         app.battery = {"percent": 64, "mv": 3790, "plugged": True}
@@ -113,6 +115,9 @@ def scenes(app):
 
     def settings_sloop():
         app.screen, app.setting, app.settings_menu = "settings", 0, "sloop"
+
+    def settings_midi():
+        app.screen, app.setting, app.settings_menu = "settings", 2, "midi"
 
     def settings_fm1():
         app.screen, app.setting, app.settings_menu = "settings", 0, "fm1"
@@ -167,7 +172,7 @@ def scenes(app):
         app.mode = "saver"
 
     return [("status", status), ("status-charging", charging), ("status-rec", recording), ("settings", settings),
-            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("status-volume", volume),
+            ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-midi", settings_midi), ("status-volume", volume),
             ("matrix", matrix), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings),
             ("editor", editor), ("editor-note", editor_note),

@@ -199,7 +199,7 @@ def bt_pair(mac):
 
 def pick_nodes(objects, source_match):
     """From pw-dump's objects: (the FM-1's USB input, the Bluetooth headphones), each a dict or None."""
-    source = fallback = sink = None
+    source, fallbacks, sink = None, [], None
     for o in objects:
         if o.get("type") != "PipeWire:Interface:Node":
             continue
@@ -215,9 +215,11 @@ def pick_nodes(objects, source_match):
             if any(m in text.lower() for m in source_match):
                 source = source or node
             elif ".usb-" in name:
-                fallback = fallback or node
+                fallbacks.append((not any(i in text.lower() for i in ("1209", "pid.codes")), node))
         elif cls == "Audio/Sink" and name.startswith("bluez_output."):
             sink = sink or node
+    # no name matched: a USB input, the FM-1's ID (1209:0001) first: a USB keyboard can have audio of its own
+    fallback = sorted(fallbacks, key=lambda f: f[0])[0][1] if fallbacks else None
     return source or fallback, sink
 
 
@@ -769,7 +771,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if self.settings_menu == "audio":
             return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
         if self.settings_menu == "midi":
+            keys = getattr(self.midi, "controllers", None) or []
             return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
+                    ("usbkeys", "USB keys", str(len(keys)) if keys else "none"),
                     ("routes", "MIDI routes", "›"), ("presets", "Route presets", "›")]
         return [("g_play", "Playing", "›"), ("g_audio", "Audio", "›"), ("g_midi", "MIDI", "›"),
                 ("recording", "Recordings", "›"), ("editor", "Sample editor", "›"), ("wifi", "Wi-Fi", wifi),
@@ -821,6 +825,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.midi.set_enabled(on)
             self.state["midi_enabled"] = on
             save_state(self.state)
+        elif key == "usbkeys":                 # USB MIDI controllers on a hub, found by themselves
+            keys = getattr(self.midi, "controllers", None) or []
+            self.say(", ".join(keys) if keys else "Plug a USB keyboard into the hub", 3)
         elif key == "pairing" and self.midi:
             self.midi.open_pairing()
             self.say("Pair from your device now (2 min)")
@@ -1102,7 +1109,11 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if not self.midi.enabled:
             return "off"
         usb = "" if self.midi.usb_label() else " (no FM-1)"
-        return (self.midi.peer + usb) if self.midi.peer else "waiting" + usb
+        keys = getattr(self.midi, "controllers", None) or []
+        if keys and not self.midi.peer:                   # USB keyboards play the FM-1 without Bluetooth
+            return (keys[0] if len(keys) == 1 else f"{len(keys)} USB keys") + usb
+        both = f"{len(keys)} USB + " if keys else ""      # first: a long Bluetooth name gets cut short on the right
+        return (both + self.midi.peer + usb) if self.midi.peer else "waiting" + usb
 
     def draw_volume(self, d):
         """the volume, big, over the home screen for a moment after up/down"""

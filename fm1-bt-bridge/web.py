@@ -417,6 +417,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
   <div class="line"><span><span class="k">Arp</span> <span class="dim small" id="s-arpd"></span></span><label class="sw"><input type="checkbox" id="s-arp"><span></span></label></div>
   <div class="line"><span><span class="k">Chord</span> <span class="dim small" id="s-chordd"></span></span><label class="sw"><input type="checkbox" id="s-chord"><span></span></label></div>
   <div class="line"><span class="k">MIDI device</span><span class="v" id="s-midi">–</span></div>
+  <div class="line"><span class="k">USB keys</span><span class="v" id="s-usbkeys">–</span></div>
   <p class="dim small" style="margin:6px 0 0">Pattern, rate and chord type: MIDI tab, Bluetooth → FM-1.</p>
 </section>
 <section><h2>Record</h2>
@@ -566,6 +567,7 @@ function renderStatus() {
   $("s-chord").checked = s.chord_on; $("s-chord").onchange = (e) => set("chord_on", e.target.checked);
   $("s-arpd").textContent = `${s.arp} ${s.arp_rate}`; $("s-chordd").textContent = s.chord;
   $("s-midi").textContent = st.midi.error ? "Bluetooth error" : !st.midi.enabled ? "off" : (st.midi.peer || "waiting");
+  $("s-usbkeys").textContent = (st.midi.controllers || []).join(", ") || "none";
 }
 $("s-vol").oninput = (e) => { editingUntil = Date.now() + 2500; $("s-volv").textContent = e.target.value + "%"; clearTimeout(volTimer); volTimer = setTimeout(() => set("volume", +e.target.value), 250); };
 $("s-tempo").onchange = (e) => { const v = Math.max(30, Math.min(300, Math.round(+e.target.value || 120))); e.target.value = v; set("bpm", v); };
@@ -573,7 +575,7 @@ function bump(d) { editingUntil = Date.now() + 2500; const el = $("s-tempo"); el
 function toggleRec() { cmd({cmd:"record", value: st && st.recording != null ? "stop" : "start"}, false).then(() => setTimeout(refresh, 900)); }
 
 // ---------------------------------------------------------------- MIDI tab
-const SOURCES = {"BT":"Bluetooth", "FM-1":"FM-1", "Box":"Box clock"}, DESTS = ["FM-1", "BT"];
+const SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "FM-1":"FM-1", "Box":"Box clock"}, DESTS = ["FM-1", "BT", "USB"];
 const CHORDS = ["oct","5th","maj","min","7","maj7","m7"], ARPS = ["up","down","updown","played","random"], RATES = ["1/4","1/8","1/8T","1/16"];
 let routes = null, sel = "BT>FM-1", routesDirtyUntil = 0, saveTimer;
 function renderMatrix() {

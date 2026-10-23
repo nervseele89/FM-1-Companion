@@ -117,6 +117,7 @@ or down repeats, faster after a second and a half.
 | **MIDI ›** | |
 | · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
 | · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
+| · **USB keys** | How many USB MIDI keyboards are plugged in (through a USB hub); press to see their names (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
 | **Recordings ›** | Takes recorded on the box: play one, edit it into a sample, or delete it (see Recording). |
@@ -233,14 +234,32 @@ The status screen's bottom right shows the clock:
   that's streaming audio, because the Bluetooth radio's interrupts come first (the clock already runs as a
   real-time thread). A wired MIDI clock is tighter.
 
+### USB keyboards
+
+Put a USB hub between the box and the FM-1: the hub into the box's USB data port (through the OTG adapter),
+the FM-1 and up to four USB MIDI keyboards or controllers into the hub. A powered hub is best: it feeds the
+FM-1 and the keyboards instead of the Pi. Each keyboard is found within a few seconds of plugging it in, and
+plays the FM-1 at once, alongside a Bluetooth one. The home screen names it (or shows "1 USB + " in front of
+the Bluetooth device), and Settings → MIDI › **USB keys** lists them.
+
+All the keyboards together are the *USB keys* row and the *USB* column of the MIDI matrix (below): USB keys →
+FM-1 is on at first; sending the FM-1's, Bluetooth's or the box's MIDI to the keyboards (for their lights,
+or to drive a keyboard's own sounds) and USB keys → Bluetooth are off until you switch them on.
+
+The installer sets the Pi's USB to full speed (12 Mbit/s, `dwc_otg.speed=1` in `/boot/firmware/cmdline.txt`,
+from the next boot): at high speed, devices behind a USB 2 hub time out on the Pi Zero. The FM-1 and MIDI
+keyboards are full-speed devices, so nothing is lost. The FM-1 is found by its name (or its USB ID), never
+taken for a keyboard or the other way round.
+
 ### MIDI matrix
 
 Settings → MIDI › **MIDI routes**:
 
 ![MIDI routes](../docs/images/screen-matrix.png)
 
-Rows are sources (Bluetooth, the FM-1, the box's clock), columns destinations (the FM-1, Bluetooth). A
-filled square is a route that's on; "–" marks a crossing that would only echo back. The joystick moves;
+Rows are sources (Bluetooth, USB keyboards, the FM-1, the box's clock), columns destinations (the FM-1,
+Bluetooth, USB keyboards). A filled square is a route that's on; "–" marks a crossing that would only echo
+back. The joystick moves;
 left from the first column goes back. **Press opens a route:**
 
 ![A route](../docs/images/screen-route.png)
@@ -256,12 +275,13 @@ left from the first column goes back. **Press opens a route:**
 | **Arp** on/off, **Arp pattern**, **Arp rate**, **Arp octaves** | The arpeggiator: held keys (chords included) one at a time on the clock; up, down, updown, played or random; 1/4, 1/8, 1/8T, 1/16; 1–3 octaves. |
 
 Values change with press, then up/down, then press or left. The *Box clock* routes have only on/off. Out
-of the box every route is on and changes nothing. A note-off always goes where its note-on went, so
+of the box every route is on and changes nothing, except the ones to the USB keyboards and USB → Bluetooth,
+which start off. A note-off always goes where its note-on went, so
 changing a route while you hold a key can't leave a note hanging. The routes are remembered, and
 **Route presets ›** (under More) keeps four whole setups to switch between.
 
 **Arp and Chord, the quick way:** the **Arp** and **Chord** switches on Settings' top list turn them on and
-off for the keyboard (the Bluetooth → FM-1 route) in one press, with the pattern, rate and chord type last
+off for the keyboards (the Bluetooth → FM-1 and USB → FM-1 routes) in one press, with the pattern, rate and chord type last
 chosen on that route's page (up, 1/8, major at first). The arp follows the box's clock or an incoming one;
 with no clock it keeps time at the Tempo setting without sending clock anywhere.
 
@@ -441,7 +461,7 @@ Then pair again with KEY1.
 | File | Installed to | Purpose |
 |---|---|---|
 | `bridge.py` | `~/.local/share/fm1-bridge/` | The OLED app, headphone control and audio routing |
-| `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service, its link to the FM-1's USB MIDI, the clock and the MIDI matrix |
+| `blemidi.py` | `~/.local/share/fm1-bridge/` | Bluetooth LE MIDI service, its link to the FM-1's USB MIDI and to USB keyboards, the clock and the MIDI matrix |
 | `libui.py` | `~/.local/share/fm1-bridge/` | The Library screens on the box |
 | `meters.py` | `~/.local/share/fm1-bridge/` | The eleven meters, recording and playback, pitch detection |
 | `midiui.py` | `~/.local/share/fm1-bridge/` | The MIDI matrix screens, Arp/Chord switches and route presets |
