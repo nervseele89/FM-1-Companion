@@ -1,6 +1,6 @@
-"""Bluetooth LE MIDI for the FM-1 bridge.
+"""Bluetooth LE MIDI for the FM-1 Companion.
 
-The Pi appears as a BLE MIDI device ("FM-1 Bridge") that phones, tablets and computers connect to,
+The Pi appears as a BLE MIDI device ("FM-1 Companion") that phones, tablets and computers connect to,
 and MIDI passes both ways between it and the FM-1's USB MIDI port:
 
   phone / iPad / Mac  <--BLE MIDI-->  Pi  <--USB MIDI (ALSA sequencer, via mido)-->  FM-1
@@ -15,7 +15,7 @@ import time
 MIDI_SERVICE = "03b80e5a-ede8-4b33-a751-6ce34ec4c700"
 MIDI_IO = "7772e5db-3868-4112-a1a9-f2669d106bf3"
 PACKET = 20                 # ATT payload with the minimum MTU: safe with every central
-DEVICE_NAME = "FM-1 Bridge"
+DEVICE_NAME = "FM-1 Companion"
 PAIRING_SECONDS = 120
 ADDRESS = re.compile(r"([0-9A-Fa-f]{2}[-:]){5}[0-9A-Fa-f]{2}")     # what BlueZ calls a device before its name
 
@@ -378,7 +378,7 @@ def start_bluez(bridge):
         GLib.timeout_add_seconds(2, refresh_keyboards)
 
     def refresh_keyboards():
-        """MIDI devices still linked from before this service existed (the bridge restarted, or the keyboard
+        """MIDI devices still linked from before this service existed (the Companion restarted, or the keyboard
         connected first at boot) write to a service that's gone: their MIDI goes nowhere until they look it up
         again. Disconnect them so they reconnect and find it; headphones and speakers are left alone."""
         objects = dbus.Interface(bus.get_object(BLUEZ, "/"), OM).GetManagedObjects()
@@ -782,7 +782,7 @@ def log_timing(packet, arrived):
         pass
 
 
-# ---------------------------------------------------------------- the bridge between the two
+# ---------------------------------------------------------------- the Companion between the two
 
 class MidiBridge:
     """Joins the FM-1's USB MIDI and the BLE MIDI service. Status for the screen:

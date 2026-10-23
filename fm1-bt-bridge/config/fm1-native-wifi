@@ -1,5 +1,5 @@
 #!/bin/sh
-# FM-1 bridge: move the Wi-Fi network from Raspberry Pi OS Trixie's netplan profiles to a native NetworkManager
+# FM-1 Companion: move the Wi-Fi network from Raspberry Pi OS Trixie's netplan profiles to a native NetworkManager
 # profile. Trixie's NetworkManager runs "netplan generate" plus a systemd reload for each netplan profile at
 # start-up, ~25 s each on a Zero W (four of them here: Wi-Fi and an unused Ethernet). With no netplan profiles
 # left only one remains. See https://github.com/raspberrypi/trixie-feedback/issues/24

@@ -1217,7 +1217,7 @@ def splash(display):
     """Drawn as soon as the OLED is open: at boot the rest of start-up takes a while on a Zero W."""
     img = Image.new("1", (128, 64))
     d = ImageDraw.Draw(img)
-    for y, text, f in ((16, "FM-1 Bridge", font(12, True)), (38, "Starting...", font(11))):
+    for y, text, f in ((16, "FM-1 Companion", font(12, True)), (38, "Starting...", font(11))):
         d.text(((128 - d.textlength(text, font=f)) / 2, y), text, font=f, fill=1)
     display.show(img)
 

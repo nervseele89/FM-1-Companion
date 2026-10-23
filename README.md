@@ -1,8 +1,8 @@
-# FM-1 Sloop Companion Device
+# FM-1 Companion
 
-[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.mp4)
+[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.1.mp4)
 
-**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.mp4)**
+**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.1.mp4)**
 (1:46, with sound): the box's own screens, all eleven meters, the settings, the MIDI matrix and the sample
 editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
 
@@ -16,7 +16,7 @@ Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, plugged into the FM-1 by USB
 own screen and joystick or from your phone.
 
 - **Wireless audio and MIDI:** the FM-1 plays on Bluetooth headphones or a speaker, and the box shows up
-  as a Bluetooth MIDI device, **"FM-1 Bridge"**, so a keyboard, iPad, phone or computer can play the FM-1
+  as a Bluetooth MIDI device, **"FM-1 Companion"**, so a keyboard, iPad, phone or computer can play the FM-1
   and hear back what it sends.
 - **A recorder and a sample editor:** record the FM-1 to WAV from the box, play takes back on the speaker,
   and edit a take (or any sample) into a new sample: trim it, fade it, normalize or reverse it, and tune it
@@ -90,7 +90,7 @@ keyboard, recordings that keep all their audio, and sample loads that convert in
 Six more meters (Tuner, MIDI, Waterfall, Stereo, History, Beat), the Recordings menu (play a take, resample
 it into a slot, delete), a metronome, arp and chord memory with one-press switches, route presets, controls
 that react at once (screens redraw in about 8 ms), a Bluetooth MIDI keyboard that reconnects by itself after
-the bridge restarts, and a steadier external clock.
+the Companion restarts, and a steadier external clock.
 </details>
 
 <details><summary>Earlier: v2.2</summary>
@@ -122,7 +122,7 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 | ![Speaker list](docs/images/screen-speakers.png) | ![Pairing](docs/images/screen-pairing.png) |
 | **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. | **Pairing**, then it's remembered and reconnects by itself. |
 | ![Screensaver](docs/images/screen-screensaver.png) | ![Starting](docs/images/screen-starting.png) |
-| **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. | **Starting:** shown as soon as the bridge opens the screen at boot, until the status screen is ready. |
+| **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. | **Starting:** shown as soon as the Companion opens the screen at boot, until the status screen is ready. |
 
 ### Meters
 
@@ -144,7 +144,7 @@ records, right goes back. The screen stays on while sound (or MIDI) plays.
 | ![Beat](docs/images/screen-meter-beat.png) | |
 | **Beat:** the tempo and the beat in the bar, flashing in time. | |
 
-The screen images are drawn by the bridge's own code (`tools/render_screens.py`).
+The screen images are drawn by the Companion's own code (`tools/render_screens.py`).
 
 ## Getting started
 
@@ -180,7 +180,7 @@ sudo reboot
 | `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot services on the Pi |
 | `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd, swap, Wi-Fi and SD-card helper configuration |
 | `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for the library, the screens, the meters, recording and playback, MIDI, the clock, the metronome and the web page (`python tests/test_library.py` etc.; needs mido, Pillow and numpy) |
-| `tools/midi_timing.py` | Analyses the bridge's Bluetooth MIDI timing log (`/dev/shm/fm1-midi-timing.log` on the Pi) |
+| `tools/midi_timing.py` | Analyses the Companion's Bluetooth MIDI timing log (`/dev/shm/fm1-midi-timing.log` on the Pi) |
 | `tools/render_screens.py` | Draws the OLED screens as PNG files for this README, without a Pi |
 | `docs/images/` | The photo and screen images |
 
@@ -196,7 +196,7 @@ sudo reboot
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send
   each note in its own packet.
 - **Start-up still takes about a minute** on a Pi Zero W's single core; Wi-Fi comes up about 40 s
-  after the bridge. The optional `config/fm1-native-wifi` step (see the
+  after the Companion. The optional `config/fm1-native-wifi` step (see the
   [box README](fm1-bt-bridge/README.md)) saves NetworkManager about a minute more.
 
 ## License

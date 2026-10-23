@@ -1,4 +1,4 @@
-# Build plan: TRS MIDI IN and OUT/THRU jacks for the FM-1 bridge
+# Build plan: TRS MIDI IN and OUT/THRU jacks for the FM-1 Companion
 
 Two 3.5 mm TRS jacks on the Pi Zero W: **MIDI IN**, and an output jack you can switch between **OUT**, **THRU**
 and **OUT + THRU** from the box. They connect to the Pi's spare serial port (GPIO14/15), so the OLED HAT and
@@ -131,8 +131,8 @@ None of the four is used by the HAT. **Power off the Pi while wiring.**
 
 ## 6. Software (I'll build it)
 
-- **Serial MIDI endpoint** in the bridge's MIDI process (`blemidi.py`): `/dev/ttyS0` at 31,250 baud (exact with
-  the Pi's fixed 250 MHz core clock), parsed with the bridge's existing MIDI parser (running status, SysEx,
+- **Serial MIDI endpoint** in the Companion's MIDI process (`blemidi.py`): `/dev/ttyS0` at 31,250 baud (exact with
+  the Pi's fixed 250 MHz core clock), parsed with the Companion's existing MIDI parser (running status, SysEx,
   real-time messages).
 - **OUT jack mode:** OUT, THRU (a copy of IN, about 1–2 ms behind), or OUT + THRU merged.
 - **Routing settings** (box and web page): IN → FM-1, IN → Bluetooth, FM-1 → OUT, Bluetooth → OUT, MIDI clock to
@@ -143,7 +143,7 @@ None of the four is used by the HAT. **Power off the Pi while wiring.**
 
 ## Notes
 
-- **Software THRU works only while the bridge runs** (not while the Pi is off or starting up). A hardware THRU
+- **Software THRU works only while the Companion runs** (not while the Pi is off or starting up). A hardware THRU
   (a 74HC14 buffer from the optocoupler's output to a third jack) would pass MIDI with the Pi off, and can be
   added later without changing the code.
 - Keep Bluetooth on its own serial port: moving it to the weaker one to free the better one for MIDI would cost

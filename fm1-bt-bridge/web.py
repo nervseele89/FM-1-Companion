@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The FM-1 bridge's web page, http://fm1bridge.local while Wi-Fi is on.
+"""The FM-1 Companion's web page, http://fm1bridge.local while Wi-Fi is on.
 
 Four tabs: Status (the box's live status, and the settings you change while playing: metronome, tempo,
 clock, arp, chord, volume, audio rate, Start/Stop, recording), MIDI (the routes as a grid, each route's
@@ -336,7 +336,7 @@ class Handler(BaseHTTPRequestHandler):
 PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f1115">
-<title>FM-1 Bridge</title>
+<title>FM-1 Companion</title>
 <style>
 :root{--bg:#f4f5f7;--card:#fff;--ink:#16181d;--dim:#626875;--line:#e2e5ea;--soft:#eef0f3;--accent:#1677c9;--on:#1d8a4a;--bad:#c23a32;--rec:#d6332b}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--ink:#e8eaee;--dim:#9aa1ad;--line:#2a2f38;--soft:#20242c;--accent:#5fb0ff;--on:#4cc27e;--bad:#ff6b61;--rec:#ff5a52}}
@@ -389,7 +389,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
 .sedgrid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px 10px;margin:10px 0}.sedgrid label{font-size:13px;color:var(--dim);display:flex;flex-direction:column;gap:3px}
 .sedgrid input,.sedgrid select{width:100%;box-sizing:border-box}.warn{color:var(--bad)}
 </style></head><body>
-<header><h1>FM-1 Bridge</h1><span id="recpill" class="pill rec" hidden>REC</span><span id="pill" class="pill">…</span></header>
+<header><h1>FM-1 Companion</h1><span id="recpill" class="pill rec" hidden>REC</span><span id="pill" class="pill">…</span></header>
 <main>
 
 <!-- ======================= STATUS ======================= -->

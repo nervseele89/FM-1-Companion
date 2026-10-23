@@ -3,7 +3,7 @@
 A Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT that gives the M-VAVE FM-1 Bluetooth:
 
 - **Audio out:** the FM-1's USB audio goes to Bluetooth headphones or a speaker.
-- **MIDI in and out:** the Pi shows up as a Bluetooth MIDI device called **"FM-1 Bridge"**. MIDI
+- **MIDI in and out:** the Pi shows up as a Bluetooth MIDI device called **"FM-1 Companion"**. MIDI
   passes both ways between it and the FM-1's USB MIDI, so an iPad, phone or computer can play the
   FM-1 and receive what you play on it.
 - **A library for the FM-1 (SLOOP):** back up and restore everything on it, load projects and samples,
@@ -49,7 +49,7 @@ FM-1 ──USB──▶ Pi Zero W ─┤
    joystick right → *Wi-Fi* → press. That frees the shared radio chip for Bluetooth. Wi-Fi stays off
    after reboots until you turn it back on the same way, for example to SSH in for an update.
 
-The screen shows the bridge about 30–40 seconds after power-on.
+The screen shows the Companion about 30–40 seconds after power-on.
 
 ## Using it
 
@@ -115,8 +115,8 @@ or down repeats, faster after a second and a half.
 | · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
 | · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). |
 | **MIDI ›** | |
-| · **BLE MIDI** on/off | Shows or hides "FM-1 Bridge" to MIDI apps. It's remembered. |
-| · **Pairing** | Opens a 2-minute window in which a device can pair with the bridge. Only needed on systems that want to pair first (below). |
+| · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
+| · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
 | · **MIDI routes ›** | The MIDI matrix (below). |
 | · **Route presets ›** | Four slots: save the matrix, load it back, or clear a slot. |
 | **Recordings ›** | Takes recorded on the box: play one, edit it into a sample, or delete it (see Recording). |
@@ -128,7 +128,7 @@ or down repeats, faster after a second and a half.
 ### Headphones
 
 Put your headphones in pairing mode, press **KEY1**, wait about 10 s, pick them with the joystick
-and press. They're remembered: on later boots the bridge reconnects by itself every 20 seconds
+and press. They're remembered: on later boots the Companion reconnects by itself every 20 seconds
 until the headphones answer.
 
 ### Bluetooth MIDI
@@ -136,12 +136,12 @@ until the headphones answer.
 Connect from your device's MIDI app; you don't pair through the system Bluetooth settings:
 
 - **iPad / iPhone:** in GarageBand, AUM, Drambo and similar apps, open the app's
-  *Bluetooth MIDI Devices* page and tap **FM-1 Bridge**.
+  *Bluetooth MIDI Devices* page and tap **FM-1 Companion**.
 - **Mac:** *Audio MIDI Setup* → *Window* → *Show MIDI Studio* → the Bluetooth button →
-  **FM-1 Bridge** → *Connect*.
+  **FM-1 Companion** → *Connect*.
 - **Android:** use an app that supports Bluetooth MIDI (for example *MIDI BLE Connect*), then your
   music app.
-- **Windows:** open Settings → MIDI › **Pairing** on the bridge, then pair "FM-1 Bridge" in Windows'
+- **Windows:** open Settings → MIDI › **Pairing** on the Companion, then pair "FM-1 Companion" in Windows'
   Bluetooth settings within 2 minutes. Whether a Windows music app can use Bluetooth MIDI depends on
   the app.
 
@@ -348,8 +348,8 @@ python3 ~/.local/share/fm1-bridge/library.py --help
   while MIDI is busy (dense clock plus notes), it's the radio sharing airtime.
 - The FM-1's USB rate (Sloop: GLO → SYSTEM → USB RATE) can be 44.1 or 48 kHz. Both work.
 - **Start-up takes about a minute** on a Zero W ("Starting..." shows first). Raspberry Pi OS Trixie
-  took nearly 3 minutes; the installer turns off cloud-init, keeps swap in RAM, and lets the bridge
-  start without waiting for the network. Wi-Fi comes up about 40 s after the bridge.
+  took nearly 3 minutes; the installer turns off cloud-init, keeps swap in RAM, and lets the Companion
+  start without waiting for the network. Wi-Fi comes up about 40 s after the Companion.
   To save another ~60 s, move your Wi-Fi from Trixie's netplan profiles to a plain NetworkManager
   profile (each netplan profile costs a ~20 s systemd reload at boot). Over SSH, with Wi-Fi on:
   `sudo setsid -w sh config/fm1-native-wifi; sudo tail -n 1 /root/fm1-native-wifi.log`. The SSH session
@@ -357,7 +357,7 @@ python3 ~/.local/share/fm1-bridge/library.py --help
 
 ## Troubleshooting
 
-**My Bluetooth keyboard stopped playing the FM-1** (it still shows as connected). When the bridge starts,
+**My Bluetooth keyboard stopped playing the FM-1** (it still shows as connected). When the Companion starts,
 it disconnects MIDI devices left over from before (after a restart, or a keyboard that connected first at
 boot) so they reconnect and find its MIDI service; give it about 15 seconds. If it doesn't come back,
 switch the keyboard's Bluetooth off and on. A phone or iPad has to be reconnected from its MIDI app.
@@ -366,16 +366,16 @@ switch the keyboard's Bluetooth off and on. A phone or iPad has to be reconnecte
 while the keyboard's transport (or arpeggiator) runs, and only if it sends clock over Bluetooth; with
 Settings → Clock on *box*, the box ignores other clock on purpose.
 
-**The screen is upside down or mirrored.** The bridge is set up for the HAT held with KEY1–3 on
+**The screen is upside down or mirrored.** The Companion is set up for the HAT held with KEY1–3 on
 the left and the cables hanging down. Waveshare's printed labels then read upside down, so the
 joystick's directions are turned round to match the screen. To hold it the other way, turn the
-screen around in the settings file and restart the bridge; the joystick follows by itself (set
+screen around in the settings file and restart the Companion; the joystick follows by itself (set
 `"flip_joystick"` to `true` or `false` only to override that):
 ```
 python3 -c "import json,pathlib as p;f=p.Path.home()/'.config/fm1-bridge/fm1-bridge.json';d=json.loads(f.read_text()) if f.exists() else {};d['rotate']=180;f.parent.mkdir(parents=True,exist_ok=True);f.write_text(json.dumps(d))"
 systemctl --user restart fm1-bridge
 ```
-To check the orientation, stop the bridge and draw a test pattern:
+To check the orientation, stop the Companion and draw a test pattern:
 ```
 systemctl --user stop fm1-bridge
 python3 ~/.local/share/fm1-bridge/bridge.py --test-screen
@@ -396,13 +396,13 @@ then see whether Linux sees the FM-1's audio and MIDI ports:
 wpctl status
 aconnect -l
 ```
-If your firmware uses a name the bridge doesn't recognise, add a word from that name to
+If your firmware uses a name the Companion doesn't recognise, add a word from that name to
 `source_match` in `~/.config/fm1-bridge/fm1-bridge.json`. Any other USB device is used as a fallback.
 
-**"FM-1 Bridge" doesn't show up in MIDI apps.** Check *BLE MIDI* is on in the settings and the MIDI
+**"FM-1 Companion" doesn't show up in MIDI apps.** Check *BLE MIDI* is on in the settings and the MIDI
 line doesn't say *BT error*. If it does, the log explains why
 (`journalctl --user -u fm1-bridge -n 50`). If the device connected to an older version of the
-bridge, forget "FM-1 Bridge" in its Bluetooth settings and connect again.
+Companion, forget "FM-1 Companion" in its Bluetooth settings and connect again.
 
 **"Audio service not ready" when connecting headphones.** PipeWire's Bluetooth support isn't running:
 ```
@@ -421,8 +421,8 @@ in the library (`…_before-restore`, `…_before-flash`…): restore it to go b
 **A firmware install was cut off** (unplugged, power lost). The FM-1 waits in update mode. Run the
 same install again from the box or the web page: it finishes the write.
 
-**No audio after a firmware install.** The bridge notices when PipeWire loses the FM-1 after it
-restarts and fixes it within about half a minute. If audio is still missing, restart the bridge:
+**No audio after a firmware install.** The Companion notices when PipeWire loses the FM-1 after it
+restarts and fixes it within about half a minute. If audio is still missing, restart the Companion:
 `systemctl --user restart wireplumber fm1-bridge`.
 
 **Forget the headphones and start over:**

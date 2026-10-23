@@ -54,7 +54,7 @@ def setup():
 
 def test_page_and_listing():
     status, page, headers = call("/")
-    assert status == 200 and b"FM-1 Bridge" in page and headers["Content-Type"].startswith("text/html")
+    assert status == 200 and b"FM-1 Companion" in page and headers["Content-Type"].startswith("text/html")
     status, lib = jcall("/api/library")
     assert status == 200 and len(lib["backups"]) == 1 and lib["backups"][0]["projects"] == ["A", "D"]
 

@@ -1,9 +1,9 @@
-#  FM-1 bridge: systemd's own unit (systemd 257, Trixie) without "network.target" in After=, installed to
+#  FM-1 Companion: systemd's own unit (systemd 257, Trixie) without "network.target" in After=, installed to
 #  /etc/systemd/system so it replaces /usr/lib/systemd/system/systemd-user-sessions.service.
 #
-#  The bridge, PipeWire and WirePlumber are user services, and user@.service starts after this unit. With
+#  The Companion, PipeWire and WirePlumber are user services, and user@.service starts after this unit. With
 #  network.target in After= they all waited for NetworkManager, which takes 1-2 minutes to start on a Zero W.
-#  The bridge never needs the network (the web page binds to any address and serves as soon as Wi-Fi is up).
+#  The Companion never needs the network (the web page binds to any address and serves as soon as Wi-Fi is up).
 #  Remove this file to go back to the stock unit.
 
 [Unit]

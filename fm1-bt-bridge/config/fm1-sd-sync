@@ -1,5 +1,5 @@
 #!/bin/sh
-# FM-1 bridge: copy the library's backups onto the SD card's FAT partition, which only root may write, so a
+# FM-1 Companion: copy the library's backups onto the SD card's FAT partition, which only root may write, so a
 # computer can read them. Run by library.py through sudo (installed to /usr/local/sbin, no arguments).
 set -eu
 user="${SUDO_USER:?run through sudo}"
