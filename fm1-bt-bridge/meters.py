@@ -12,7 +12,9 @@ import shutil
 import subprocess
 import threading
 import time
+import wave
 from datetime import datetime
+from pathlib import Path
 
 from PIL import Image, ImageDraw
 
@@ -259,6 +261,52 @@ class LevelReader:
         self.proc, self.target = None, None
 
 
+CLIP_LEVEL = 8000                    # a flat top counts above -12 dBFS
+CLIP_WARN, CLIP_RATE = 5, 6.0        # warn from 5 flat tops, and 6 a minute of sound: measured on the FM-1, its
+                                     # four tracks at full USB level gave 7-13 a minute (crackly), on master at
+                                     # half 4 (clean), one track alone 0
+
+
+def clip_count(path, level=CLIP_LEVEL):
+    """-> (flat tops, seconds of sound) in a 16-bit WAV. A flat top is three or more samples in a row at the
+    same loud value, which is what a clipped wave looks like. The FM-1 set to send USB at full level clips like
+    this inside, before the sound reaches the box (at about -5 dBFS, so the Bars meter's CLIP never shows it).
+    Read a second at a time."""
+    np = _np
+    count, sound = 0, 0
+    try:
+        with wave.open(str(path)) as w:
+            channels, frames = w.getnchannels(), w.getframerate()
+            if w.getsampwidth() != 2:
+                return 0
+            while True:
+                data = w.readframes(frames)
+                if not data:
+                    break
+                x = np.frombuffer(data, dtype="<i2").reshape(-1, channels)
+                sound += int((np.abs(x).max(axis=1) > 600).sum())
+                for c in range(channels):     # both channels: one alone misses half the evidence
+                    v = x[:, c]
+                    same = (v[1:] == v[:-1]) & (np.abs(v[1:]) >= level)     # a sample equal to the one before
+                    edges = np.diff(np.concatenate([[0], same.astype(np.int8), [0]]))
+                    starts, ends = np.nonzero(edges == 1)[0], np.nonzero(edges == -1)[0]
+                    count += int(((ends - starts) >= 2).sum())             # two equal steps: three samples
+                time.sleep(0.02)              # a breath between seconds: the audio and the screen come first
+    except (OSError, EOFError, wave.Error):
+        return 0, 0.0
+    return count, sound / frames
+
+
+def clipped(count, seconds):
+    """True when a take clipped enough to hear"""
+    return count >= CLIP_WARN and count / max(seconds / 60, 1e-6) >= CLIP_RATE
+
+
+def clips_file(path):
+    """where a recording's clip count is kept, next to it"""
+    return Path(str(path) + ".clips")
+
+
 def wav_seconds(path):
     """how long a WAV the recorder wrote lasts, from its size and the byte rate in its header"""
     try:
@@ -404,10 +452,27 @@ class MeterScreens:
 
     # ---- recording
 
+    def finish_recording(self, text):
+        """stop, say text (with the length for {}), then check the take for clipping in the background"""
+        path, seconds = self.recorder.stop()
+        self.say(text.format(clock(seconds)))
+        if path:
+            threading.Thread(target=self.check_clipping, args=(path,), daemon=True).start()
+
+    def check_clipping(self, path):
+        load_numpy()
+        count, seconds = clip_count(path)
+        bad = clipped(count, seconds)
+        try:
+            clips_file(path).write_text(str(count if bad else 0))
+        except OSError:
+            pass
+        if bad:                               # set FM-1 USB to master and turn it down, or lower its tracks
+            self.say(f"Clipped {count}x: turn the FM-1 down", 6)
+
     def toggle_recording(self):
         if self.recorder.recording():
-            _, seconds = self.recorder.stop()
-            self.say(f"Saved: {clock(seconds)} recorded")
+            self.finish_recording("Saved: {} recorded")
             return
         if not self.source:
             self.say("FM-1 not found")
@@ -426,8 +491,7 @@ class MeterScreens:
         if not self.recorder.proc:
             return None
         if not self.recorder.recording():
-            _, seconds = self.recorder.stop()
-            self.say(f"Recording stopped at {clock(seconds)}")
+            self.finish_recording("Recording stopped at {}")
             return None
         if now >= self.rec_space_check:
             self.rec_space_check = now + 5
@@ -436,8 +500,7 @@ class MeterScreens:
             except OSError:
                 full = False
             if full:
-                _, seconds = self.recorder.stop()
-                self.say(f"SD card full: {clock(seconds)} saved")
+                self.finish_recording("SD card full: {} saved")
                 return None
         seconds = self.recorder.seconds(now)
         self.tape_done = seconds % TAPE_SECONDS / TAPE_SECONDS

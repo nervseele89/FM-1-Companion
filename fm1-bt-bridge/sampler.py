@@ -43,7 +43,9 @@ def suggest(x, rate):
     """(start, end) in seconds for a new edit: the first sound to the last, at most a SLOOP slot long"""
     n = np()
     total = len(x) / rate
-    loud = n.nonzero(n.abs(x) > SILENCE)[0]
+    level = n.abs(x)
+    quiet = max(SILENCE, 0.03 * float(level.max()) if len(x) else 0.0)   # -30 dB under the peak: a take's hiss
+    loud = n.nonzero(level > quiet)[0]                                    # isn't its sound
     if not len(loud):
         return 0.0, round(min(total, library.SLOT_SECONDS), 3)
     start = max(0, int(loud[0]) - rate // 200) / rate

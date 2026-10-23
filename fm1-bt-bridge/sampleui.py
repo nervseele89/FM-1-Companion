@@ -84,7 +84,7 @@ class SampleEditor:
     def editor_change(self, field, step):
         ed = self.ed
         if field in ("start", "end"):
-            move = step * max(0.005, ed["seconds"] / 512)        # half a pixel of the waveform a press
+            move = step * max(0.01, ed["seconds"] / 128)         # a pixel of the waveform a press
             if field == "start":
                 ed["start"] = round(min(max(0.0, ed["start"] + move), ed["end"] - sampler.SHORTEST), 3)
             else:

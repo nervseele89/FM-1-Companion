@@ -517,6 +517,10 @@ def listing():
                     head = f.read(44)
                 rate = int.from_bytes(head[28:32], "little") if head[:4] == b"RIFF" else 0
                 entry["seconds"] = max(0, entry["bytes"] - 44) // (rate or 192000)
+                try:                          # flat tops counted when it was saved (meters.clip_count)
+                    entry["clips"] = int(Path(str(path) + ".clips").read_text())
+                except (OSError, ValueError):
+                    pass
             elif name == "projects":
                 try:
                     project = sloop.load_json(path)

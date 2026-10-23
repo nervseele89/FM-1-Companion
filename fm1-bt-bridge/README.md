@@ -164,6 +164,11 @@ On any meter screen, press the joystick to start recording the FM-1, and again t
   *REC* on the screensaver. Leaving the meters doesn't stop it.
 - It **stops by itself** if the FM-1 goes away or the SD card is down to its last 200 MB, and says so.
   Shutting down with KEY3 finishes the file first.
+- **Clean takes need headroom on the FM-1.** Set to send USB audio at **full** level (handy: its speaker
+  stays off), the FM-1's own mix can clip before the sound reaches the box, and the take crackles. The box
+  can't undo that, so after each take it checks for clipped (flat-topped) peaks and says
+  *"Clipped 14x: turn the FM-1 down"*; the web page marks the take too. For clean takes set the FM-1's USB
+  audio to **master** with the knob around half, or keep full and lower its track levels in SLOOP.
 - **The Tape meter** turns its reels while sound plays; while recording, the tape winds from the left reel
   to the right one, a full reel every 30 minutes.
 - **On the box:** Settings → **Recordings ›** lists the takes. Pick one, then:

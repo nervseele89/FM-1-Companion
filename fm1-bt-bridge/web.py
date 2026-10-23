@@ -229,6 +229,7 @@ class Handler(BaseHTTPRequestHandler):
             if not path or not path.is_file():
                 return self.fail("no such file", 404)
             path.unlink()
+            Path(str(path) + ".clips").unlink(missing_ok=True)      # a recording's clip count goes with it
             return self.send(200, {"ok": True, "message": f"deleted {path.name}"})
         self.fail("not found", 404)
 
@@ -674,7 +675,7 @@ function renderLibrary() {
     <div class="row"><button onclick="ask({cmd:'flash', file:${q(f.name)}})">Install…</button><button class="danger" onclick="del('firmware',${q(f.name)})">Delete</button></div></div>`).join("")
     : `<p class="empty">No firmware yet: Get SLOOP update or Get Clipper, or upload a .fwsc.</p>`;
   $("recordings").innerHTML = lib.recordings.length ? lib.recordings.map((r, i) => `<div class="item" style="display:block"><div class="row" style="justify-content:space-between"><div><div class="name">${when(r.date)}</div>
-    <div class="meta">${mins(r.seconds)} · ${(r.bytes / 1048576).toFixed(1)} MB</div></div>
+    <div class="meta">${mins(r.seconds)} · ${(r.bytes / 1048576).toFixed(1)} MB${r.clips >= 5 ? ` · <span class="warn" title="The FM-1 clipped before the box got the sound: set its USB to master and turn it down, or lower its track levels">clipped ${r.clips}×</span>` : ""}</div></div>
     <a href="/files/recordings/${encodeURIComponent(r.name)}" download><button>Download</button></a></div>
     <audio controls preload="none" src="/files/recordings/${encodeURIComponent(r.name)}?inline=1"></audio>
     <div class="row" style="margin-top:6px"><button onclick="sedOpen('recordings', ${q(r.name)})">Edit as sample…</button>

@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 
 import library
-from meters import Player, clock, wav_seconds
+from meters import Player, clips_file, clock, wav_seconds
 
 SLOTS = ["USR1", "USR2", "USR3", "USR4"]
 TARGETS = [("working", "Working project"), ("A", "Project A"), ("B", "Project B"), ("C", "Project C"),
@@ -275,6 +275,7 @@ class LibraryScreens:
         elif action == "delete":
             def delete():
                 path.unlink(missing_ok=True)
+                clips_file(path).unlink(missing_ok=True)
                 self.screen = "settings"
                 self.say("Deleted")
             seconds = wav_seconds(path) if path.exists() else 0

@@ -82,6 +82,35 @@ def make_app(block):
     return app, display
 
 
+
+
+def test_clipping():
+    """A take the FM-1 clipped (flat tops) is flagged; a clean one, or one track brushing the ceiling, isn't."""
+    import wave
+    meters.load_numpy()
+
+    def take(name, peak, ceiling, seconds=60):
+        t = np.arange(48000 * seconds) / 48000
+        x = np.clip(peak * np.sin(2 * np.pi * 110 * t) * (0.6 + 0.4 * np.sin(2 * np.pi * 0.5 * t)), -ceiling, ceiling)
+        path = TMP / name
+        with wave.open(str(path), "wb") as w:
+            w.setnchannels(2)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(np.repeat(np.round(x).astype("<i2"), 2).tobytes())
+        return path
+    hot, clean = take("hot.wav", 30000, 17994), take("clean.wav", 15000, 32767)
+    count, seconds = meters.clip_count(hot)
+    assert meters.clipped(count, seconds) and 55 < seconds <= 60, (count, seconds)
+    assert meters.clip_count(clean)[0] == 0 and not meters.clipped(*meters.clip_count(clean))
+    app = bridge.App(Capture(), dict(bridge.DEFAULTS))
+    app.message = None
+    app.check_clipping(hot)                                  # what runs after a recording stops
+    assert "Clipped" in app.message and int(meters.clips_file(hot).read_text()) == count
+    app.message = None
+    app.check_clipping(clean)
+    assert app.message is None and meters.clips_file(clean).read_text() == "0"
+
 def test_levels():
     (pl, pr), (rl, rr) = meters.levels(tone([1000], amp=1.0, right=0.5, frames=1600))
     assert abs(meters.db(pl)) < 0.1 and abs(meters.db(pr) + 6.02) < 0.1           # peaks: 0 and -6 dBFS

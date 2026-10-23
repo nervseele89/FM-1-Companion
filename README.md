@@ -191,6 +191,9 @@ sudo reboot
 - **On battery, the FM-1 runs (and charges) from it too.** The Pi Zero's USB port gives the FM-1 power
   that software can't switch off, so a PiSugar 3 lasts far less with the FM-1 plugged in. Charge the FM-1
   first; cutting its power on battery needs a small hardware switch, still being tested.
+- **Recordings clip if the FM-1 sends USB at full level** with several tracks playing: it clips inside the
+  FM-1, before the box gets the sound. The box warns you after the take; set the FM-1's USB audio to
+  master with the knob around half (or lower its track levels) for clean takes.
 - **Plugging the FM-1 in while the Pi is running can reboot the Pi.** The Zero's USB port has no
   current limit. Connect the FM-1 first, or use a powered USB hub.
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send
