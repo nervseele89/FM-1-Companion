@@ -28,6 +28,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 import battery
 import library
+import sloop
 from libui import LIBRARY_KEYS, LibraryScreens
 import meters
 from meters import MeterScreens
@@ -53,6 +54,8 @@ DEFAULTS = {
     "metronome": False,     # a click on the speaker in time with the clock
     "click": "mid",         # its level: "low", "mid", "high"
     "sample_level": "-6 dB",  # how loud samples go into the FM-1: "-6 dB", "-3 dB", "full" (SLOOP's own)
+    "library_fm1": "A",     # with two FM-1s on a hub, the one backups, restores and loads go to (library.py reads it)
+    "mix": {"a": 100, "b": 100, "usb": 100},   # the mixer's levels (%, to 200): FM-1 A, FM-1 B, USB keyboards' sound
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -197,9 +200,11 @@ def bt_pair(mac):
 
 # ---------------------------------------------------------------- audio (PipeWire)
 
-def pick_nodes(objects, source_match):
-    """From pw-dump's objects: (the FM-1's USB input, the Bluetooth headphones), each a dict or None."""
-    source, fallbacks, sink = None, [], None
+def pick_nodes(objects, source_match, cards=()):
+    """From pw-dump's objects: (FM-1 A's USB input, the Bluetooth headphones, FM-1 B's input, [other USB inputs:
+    a keyboard's own sound]), each a dict or None. cards: the FM-1s' sound card numbers, A first
+    (sloop.fm1_cards); B only with two of them. An FM-1 whose name couldn't be read is known by its USB ID."""
+    sources, fallbacks, sink = [], [], None
     for o in objects:
         if o.get("type") != "PipeWire:Interface:Node":
             continue
@@ -212,23 +217,97 @@ def pick_nodes(objects, source_match):
             node["label"] = props.get("alsa.card_name") or props.get("node.nick") or label
             text = " ".join(str(props.get(k, "")) for k in
                             ("node.name", "node.description", "node.nick", "alsa.card_name", "alsa.long_card_name"))
+            path = re.search(r":(\d+)", str(props.get("api.alsa.path", "")))   # "front:3": sound card 3
+            node["card"] = int(path.group(1)) if path else None
             if any(m in text.lower() for m in source_match):
-                source = source or node
+                sources.append(node)
             elif ".usb-" in name:
-                fallbacks.append((not any(i in text.lower() for i in ("1209", "pid.codes")), node))
+                fallbacks.append((any(i in text.lower() for i in ("1209", "pid.codes")), node))
         elif cls == "Audio/Sink" and name.startswith("bluez_output."):
             sink = sink or node
-    # no name matched: a USB input, the FM-1's ID (1209:0001) first: a USB keyboard can have audio of its own
-    fallback = sorted(fallbacks, key=lambda f: f[0])[0][1] if fallbacks else None
-    return source or fallback, sink
+    # no name matched: the FM-1's USB ID (1209:0001); anything else is a USB keyboard's own sound
+    fallback = next((n for fm1, n in fallbacks if fm1), None)
+    others = [n for fm1, n in fallbacks if not fm1]
+    cards = list(cards)
+    if len(cards) > 1:                        # two FM-1s: A and B by the hub port they're on
+        by_card = {n["card"]: n for n in sources}
+        a, b = by_card.get(cards[0]), by_card.get(cards[1])
+        return a or (sources[0] if sources else fallback), sink, b, others
+    return (sources[0] if sources else fallback), sink, None, others
 
 
-def pw_nodes(source_match):
-    code, out = run(["pw-dump", "-N"], timeout=10, merge=False, clean=False)
-    try:
-        return pick_nodes(json.loads(out), source_match) if code == 0 else (None, None)
-    except ValueError:
-        return None, None
+class PwWatch:
+    """PipeWire's objects, kept up to date by one `pw-dump --monitor` left running. Every new connection to
+    PipeWire (a pw-dump, a pw-cli, a wpctl) costs a Zero W 1-2 s of CPU in PipeWire and WirePlumber, and a
+    whole pw-dump with three sound sources ~5 s: done every scan, that took a third of the CPU, made playing
+    lag and the controls slow. This connects once: the whole picture, then only what changes."""
+
+    def __init__(self):
+        self.objects, self.ready = {}, False
+        self.lock, self.changed = threading.Lock(), threading.Event()
+
+    def start(self):
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def run(self):
+        while True:
+            try:
+                proc = subprocess.Popen(["pw-dump", "-N", "-m"], stdout=subprocess.PIPE,
+                                        stderr=subprocess.DEVNULL, text=True)
+            except OSError:
+                return
+            lines = []
+            for line in proc.stdout:          # batches: "[", objects, "]"
+                lines.append(line)
+                if line.rstrip() == "]":
+                    try:
+                        self.apply(json.loads("".join(lines)))
+                    except ValueError:
+                        pass
+                    lines = []
+            with self.lock:                   # PipeWire went away (restarted): start afresh
+                self.objects, self.ready = {}, False
+            time.sleep(2)
+
+    def apply(self, batch):
+        with self.lock:
+            for o in batch:
+                key = o.get("id")
+                if o.get("info") is None and "type" not in o:
+                    self.objects.pop(key, None)                 # removed
+                    continue
+                old = self.objects.get(key)
+                if old and old.get("info") and o.get("info"):  # an update: only what changed is in it
+                    info = dict(old["info"], **o["info"])
+                    info["params"] = dict(old["info"].get("params") or {}, **(o["info"].get("params") or {}))
+                    o = dict(old, **dict(o, info=info))
+                self.objects[key] = o
+            self.ready = True
+        self.changed.set()
+
+    def snapshot(self):
+        """the objects as pw-dump gives them, or None before the first picture"""
+        with self.lock:
+            return list(self.objects.values()) if self.ready else None
+
+
+def node_volume(objects, node_id):
+    """a node's volume in % as wpctl shows it (the cube root of its channel volume), or None"""
+    for o in objects:
+        if o.get("id") == node_id:
+            for props in ((o.get("info") or {}).get("params") or {}).get("Props") or []:
+                volumes = props.get("channelVolumes") if isinstance(props, dict) else None
+                if volumes:
+                    return round(max(0.0, volumes[0]) ** (1 / 3) * 100)
+    return None
+
+
+def pw_nodes(source_match, watch):
+    """-> (pick_nodes' answer, the objects), or None before PipeWire's picture is in (not "all unplugged")"""
+    objects = watch.snapshot()
+    if not objects:
+        return None
+    return pick_nodes(objects, source_match, sloop.fm1_cards()), objects
 
 
 def get_volume(node_id):
@@ -269,8 +348,10 @@ def wifi_enabled():
 
 
 def set_rate(rate):
-    """Lock PipeWire to rate (until PipeWire restarts; Loopback sets it again before each start)."""
+    """Lock PipeWire to rate (until PipeWire restarts; Loopback sets it again before each start), in blocks of
+    1024 samples: left alone, at 48 kHz it picks 2048, ~20 ms more delay at every stage (keys feel laggy)."""
     run(["pw-metadata", "-n", "settings", "0", "clock.force-rate", str(rate)], timeout=5)
+    run(["pw-metadata", "-n", "settings", "0", "clock.force-quantum", "1024"], timeout=5)
 
 
 def set_wifi(on):
@@ -285,8 +366,9 @@ class Loopback:
         self.proc, self.key = None, None
         self.rate, self.paused_until = rate, 0.0
 
-    def ensure(self, source, sink):
-        key = (source, sink) if source and sink else None
+    def ensure(self, source, sink, name=None):
+        """name: the playback side's node name (a mixer channel's, to set its level there)"""
+        key = (source, sink, name) if source and sink else None
         if key == self.key and (key is None or self.proc.poll() is None):
             return
         if time.monotonic() < self.paused_until:
@@ -297,7 +379,8 @@ class Loopback:
             self.proc = subprocess.Popen(
                 ["pw-loopback",
                  "--capture-props", f"target.object={source} node.dont-reconnect=true",
-                 "--playback-props", f"target.object={sink} node.dont-reconnect=true"],
+                 "--playback-props", f"target.object={sink} node.dont-reconnect=true"
+                 + (f" node.name={name}" if name else "")],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.key = key
 
@@ -319,6 +402,60 @@ class Loopback:
             except subprocess.TimeoutExpired:
                 self.proc.kill()
         self.proc, self.key = None, None
+
+
+MIX_MAX = 200                           # the levels go to 200%: some keyboards' synths are much quieter
+
+
+class Mixer:
+    """With more than one sound source (FM-1 A and B, a USB keyboard's own sound): one pw-loopback a source,
+    straight to the speaker, its playback node named fm1-mix-<key> so its level can be set there; PipeWire adds
+    them up at the speaker, before Bluetooth. (A mixing stage of its own between them and the speaker cost a
+    Zero W another hop of delay and CPU: playing felt laggy, the controls slow.) An FM-1 keeps the clock, the
+    others are re-timed to it (WirePlumber gives USB inputs the slack for that: wireplumber-51-fm1-bridge.conf)."""
+
+    def __init__(self, rate=48000):
+        self.sink, self.rate = None, rate
+        self.channels, self.levels = {}, {}   # key -> Loopback to the speaker; node id -> level last set
+        self.paused_until = 0.0
+
+    def running(self):
+        return any(loop.running() for loop in self.channels.values())
+
+    def ensure(self, sink, sources):
+        """sink: the speaker's node name or None; sources: [(key, source node name)]"""
+        if time.monotonic() < self.paused_until:
+            return
+        if sink != self.sink:
+            self.stop()
+            self.sink = sink
+        wanted = dict(sources) if sink else {}
+        for key in [k for k in self.channels if k not in wanted]:
+            self.channels.pop(key).stop()
+        for key, source in wanted.items():
+            loop = self.channels.setdefault(key, Loopback(self.rate))
+            loop.rate = self.rate
+            loop.ensure(source, sink, f"fm1-mix-{key}")
+
+    def set_levels(self, objects, levels):
+        """levels: {key: percent}, set on the channels' nodes once pw-dump shows them"""
+        for o in objects:
+            props = (o.get("info") or {}).get("props") or {}
+            name = str(props.get("node.name", ""))
+            key = name[len("fm1-mix-"):] if name.startswith("fm1-mix-") else None
+            if key in levels and self.levels.get(o.get("id")) != levels[key]:
+                run(["wpctl", "set-volume", str(o["id"]), f"{levels[key] / 100:.2f}"], timeout=5)
+                self.levels[o.get("id")] = levels[key]
+
+    def reopen(self, rate):
+        self.rate = rate
+        self.stop()
+        self.paused_until = time.monotonic() + 7
+
+    def stop(self):
+        for loop in self.channels.values():
+            loop.stop()
+        self.channels, self.levels, self.sink = {}, {}, None
 
 
 # ---------------------------------------------------------------- hardware
@@ -531,8 +668,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.events = queue.Queue()
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback(state["audio_rate"])
+        self.mixer = Mixer(state["audio_rate"])        # a second FM-1, or a USB keyboard's sound: mixed
         self.metro_sent = None                # what the MIDI process was last told about the metronome
-        self.source = self.sink = None
+        self.source = self.sink = self.source_b = None
+        self.others = []                      # other USB sound: a keyboard's own synth
+        self.scan_now = False                 # a mixer level changed: apply it within a second
+        self.pw = PwWatch()                   # PipeWire's objects, without a new connection each scan
+        self.mix_lost = 0                     # scans in a row that found one source while mixing
         self.volume = None
         self.volume_lock = threading.Lock()   # one wpctl at a time, the newest press wins
         self.volume_job, self.volume_busy, self.volume_at = None, False, 0.0
@@ -573,6 +715,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         shows a USB or Bluetooth change (then a few times quickly), otherwise only now and then."""
         next_scan = next_reconnect = 0.0
         fast_until, seen = 0.0, None
+        self.pw.start()
         while True:
             now = time.monotonic()
             fingerprint = hardware_fingerprint()
@@ -581,7 +724,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                 next_scan = min(next_scan, now + 1.5)       # PipeWire needs a moment to add its nodes
             if now >= self.next_wifi:
                 self.wifi, self.next_wifi = wifi_enabled(), now + 60
-            if now >= next_scan:
+            if now >= next_scan or self.scan_now or self.pw.changed.is_set():     # cheap now: no new connection
+                self.scan_now = False
+                self.pw.changed.clear()
                 self.scan_devices()
                 settled = self.source and self.sink and (not self.midi or self.midi.usb_label())
                 next_scan = now + (2 if now < fast_until else 15 if settled else 6)
@@ -612,16 +757,56 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
     def scan_devices(self):
         if self.midi:
             self.midi.poll()
-        source, sink = pw_nodes(self.state["source_match"])
-        volume = get_volume(sink["id"]) if sink else None
+        found = pw_nodes(self.state["source_match"], self.pw)
+        if found is None:
+            return                            # couldn't look: keep everything as it is
+        (source, sink, source_b, others), objects = found
+        volume = node_volume(objects, sink["id"]) if sink else None
+        if sink and volume is None:
+            volume = get_volume(sink["id"])
         if sink == self.sink and time.monotonic() - self.volume_at < 3:
             volume = self.volume              # a reading from before the last press landed
-        changed = (source, sink) != (self.source, self.sink)
+        changed = (source, sink, source_b, others) != (self.source, self.sink, self.source_b, self.others)
         if changed or volume != self.volume:
-            self.source, self.sink, self.volume = source, sink, volume
+            self.source, self.sink, self.source_b, self.others, self.volume = source, sink, source_b, others, volume
             self.post("status", changed)
-        self.loop.ensure(source and source["name"], sink and sink["name"])
+        channels = self.mix_channels()
+        if len(channels) > 1:                 # more than one source: through the mixer, each at its level
+            self.loop.ensure(None, None)
+            self.mixer.ensure(sink and sink["name"],
+                              [(key, node["name"]) for key, node in channels if self.mix_level(key) > 0])
+            self.mixer.set_levels(objects, {key: self.mix_level(key) for key, _ in channels})
+            self.mix_lost = 0
+        elif self.mixer.running() and self.mix_lost < 1:
+            self.mix_lost += 1                # a source gone: sure only on the next look (no dropout for nothing)
+        else:                                 # the FM-1 alone: straight to the speaker, as ever
+            self.mixer.stop()
+            self.mix_lost = 0
+            self.loop.ensure(source and source["name"], sink and sink["name"])
         self.heal_pipewire(source)
+
+    def mix_channels(self):
+        """[(key, node)] of the sound sources there are: "a", "b" (the FM-1s), "usb0"... (keyboards' own sound)"""
+        found = [("a", self.source), ("b", self.source_b)] + [(f"usb{i}", n) for i, n in enumerate(self.others)]
+        return [(key, node) for key, node in found if node]
+
+    def mix_level(self, key):
+        return int((self.state.get("mix") or {}).get("usb" if key.startswith("usb") else key, 100))
+
+    def set_mix_level(self, key, level):
+        level = max(0, min(MIX_MAX, int(level)))       # over 100: a quiet source (a keyboard's synth) boosted
+        self.state["mix"] = dict(self.state.get("mix") or {}, **{key: level})
+        self.save_settings()
+        self.scan_now = True
+
+    def live(self):
+        return self.loop.running() or self.mixer.running()
+
+    def capture_target(self):
+        """what recordings and the meters listen to: the FM-1, or while mixing, what plays on the speaker"""
+        if self.mixer.running() and self.mixer.sink:
+            return "monitor:" + self.mixer.sink
+        return self.source and self.source["name"]
 
     def heal_pipewire(self, source):
         """WirePlumber can lose the FM-1 when it reconnects quickly under another identity (as after a
@@ -757,9 +942,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         tempo = f"{self.state['bpm']} BPM"
         onoff = lambda on: "on" if on else "off"      # noqa: E731
         if self.settings_menu == "sloop":     # SLOOP 2.3+'s editor protocol
-            return [("backup", "Back up now", ""), ("restore", "Restore", "›"), ("project", "Load project", "›"),
-                    ("sample", "Load sample", "›"), ("sample_level", "Sample level", self.state["sample_level"]),
-                    ("auto", "Auto backup", self.auto_label(self.auto_mode())), ("sd", "Import SD card", "")]
+            which = ([("library_fm1", "FM-1", self.state["library_fm1"])]       # only with two FM-1s plugged in
+                     if self.midi and getattr(self.midi, "usb_b", None) else [])
+            return which + [("backup", "Back up now", ""), ("restore", "Restore", "›"),
+                            ("project", "Load project", "›"), ("sample", "Load sample", "›"),
+                            ("sample_level", "Sample level", self.state["sample_level"]),
+                            ("auto", "Auto backup", self.auto_label(self.auto_mode())), ("sd", "Import SD card", "")]
         if self.settings_menu == "fm1":       # the FM-1 itself, whatever it runs
             return [("fw_info", "Runs", self.fw_label or "?"), ("firmware", "Install firmware", "›")]
         if self.settings_menu == "play":      # what changes while playing
@@ -769,7 +957,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                     ("clock", "Clock", self.state["clock_mode"]), ("arp_on", "Arp", onoff(keys["arp_on"])),
                     ("chord_on", "Chord", onoff(keys["chord_on"])), ("click", "Click level", self.state["click"])]
         if self.settings_menu == "audio":
-            return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
+            names = {"a": "FM-1 A level" if self.source_b else "FM-1 level", "b": "FM-1 B level",
+                     "usb": "USB keys level"}
+            keys = list(dict.fromkeys("usb" if k.startswith("usb") else k for k, _ in self.mix_channels()))
+            mix = [(f"mix_{k}", names[k], ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
+                   for k in keys] if len(self.mix_channels()) > 1 else []
+            return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)] + mix
         if self.settings_menu == "midi":
             keys = getattr(self.midi, "controllers", None) or []
             return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
@@ -795,16 +988,23 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.state["audio_rate"] = rate
             self.save_settings()
             self.loop.reopen(rate)
+            self.mixer.reopen(rate)
             self.say(f"{rate / 1000:g} kHz: audio restarts")
         elif key == "clock":
             self.set_clock("box" if self.state["clock_mode"] == "follow" else "follow")
-        elif key == "tempo":
-            self.editing = "tempo"
+        elif key == "tempo" or key.startswith("mix_"):
+            self.editing = key                 # up/down change it
         elif key == "metronome":
             self.state["metronome"] = not self.state["metronome"]
             self.save_settings()
             if self.state["metronome"] and not self.sink:
                 self.say("Metronome: connect a speaker")
+        elif key == "library_fm1":
+            self.state["library_fm1"] = "B" if self.state["library_fm1"] == "A" else "A"
+            self.save_settings()
+            library.forget_firmware()          # IN shows what the chosen FM-1 runs: ask it
+            self.fw_asked, self.fw_seen = False, time.monotonic() - 5
+            self.say(f"Sloop jobs go to FM-1 {self.state['library_fm1']}", 2)
         elif key == "sample_level":
             levels = ("-6 dB", "-3 dB", "full")
             now = self.state["sample_level"] if self.state["sample_level"] in levels else "-6 dB"
@@ -901,6 +1101,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.recorder.stop()                  # finishes the WAV file
         self.player.stop()
         self.loop.stop()
+        self.mixer.stop()
         time.sleep(1.5)
         self.display.power(False)
         run(["sudo", "-n", "systemctl", "poweroff"], timeout=10)
@@ -939,6 +1140,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                 self.settings_menu = None
             elif key == "left":
                 self.open_meters()
+        elif self.screen == "settings" and self.editing and self.editing.startswith("mix_"):
+            if key in ("up", "down"):
+                which = self.editing[4:]
+                self.set_mix_level(which, self.mix_level(which) + (5 if key == "up" else -5))
+            elif key in ("press", "left", "right"):
+                self.editing = None
         elif self.screen == "settings" and self.editing == "tempo":
             if key in ("up", "down"):
                 self.set_clock(bpm=self.state["bpm"] + (1 if key == "up" else -1))
@@ -988,10 +1195,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         """Everything the screen shows right now. Drawing a frame takes ~75 ms on a Zero W, so
         render() only draws when this changes."""
         if self.mode == "saver":
-            return ("saver", int(now // 20), self.loop.running(), bool(self.midi and self.midi.peer),
+            return ("saver", int(now // 20), self.live(), bool(self.midi and self.midi.peer),
                     self.recorder.recording())
         return (self.screen, self.busy and (self.busy, int(now * 2) % 4),
-                self.message if now < self.message_until else None, self.loop.running(),
+                self.message if now < self.message_until else None, self.live(),
                 self.source and self.source["label"], self.fw_label, self.sink and self.sink["label"], self.connecting,
                 self.state["last_name"], self.auto, self.volume, now < self.volume_shown,
                 self.battery and (self.battery["percent"], self.battery["plugged"]),
@@ -1031,7 +1238,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.display.show(img)
 
     def draw_status(self, d):
-        live = self.loop.running()
+        live = self.live()
         d.text((0, 0), "FM-1 > BT", font=self.f_title, fill=1)
         tag = "LIVE" if live else "idle"
         if self.recorder.recording():
@@ -1051,7 +1258,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             out = self.state["last_name"] + (" (off)" if self.auto else " (paused)")
         else:
             out = "none: press KEY1"
-        rows = (("IN", (self.fw_label or short_label(self.source["label"])) if self.source else "FM-1 not found"),
+        fm1 = (self.fw_label or short_label(self.source["label"])) if self.source else "FM-1 not found"
+        rows = (("IN", fm1 + (" + B" if self.source and self.source_b else "")),
                 ("OUT", out),
                 ("MIDI", self.midi_text()))
         for i, (name, value) in enumerate(rows):
@@ -1091,7 +1299,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
 
     def draw_saver(self, d, now):
         """After OFF_AFTER idle: "FM-1 LIVE" (or idle) in small type, moving every 20 s."""
-        text = "FM-1 " + ("LIVE" if self.loop.running() else "idle")
+        text = "FM-1 " + ("LIVE" if self.live() else "idle")
         if self.midi and self.midi.peer:
             text += " +MIDI"
         if self.recorder.recording():
@@ -1140,7 +1348,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             value = fit(d, value, self.f_body, 70)
             w = d.textlength(value, font=self.f_body)
             d.text((125 - w, y), value, font=self.f_body, fill=0 if selected else 1)
-        hint = "up/down = tempo  < done" if self.editing == "tempo" else "press = change   < back"
+        hint = ("up/down = tempo  < done" if self.editing == "tempo" else
+                "up/down = level  < done" if self.editing else "press = change   < back")
         d.text((0, 53), hint, font=self.f_small, fill=1)
 
     def draw_scan(self, d):

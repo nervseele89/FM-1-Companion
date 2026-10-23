@@ -337,6 +337,51 @@ def test_usb_keys_play_the_fm1():
     assert {k for k, r in blemidi.default_routes().items() if not r["on"]} == set(blemidi.OFF_AT_FIRST)
 
 
+CARDS = """ 0 [SMK37VA        ]: USB-Audio - SMK-37+VA
+                      SMK-37+VA at usb-20980000.usb-1.2, full speed
+ 1 [Felucca        ]: USB-Audio - Felucca
+                      Hugelton Instruments Felucca at usb-20980000.usb-1.3, full speed
+ 2 [vc4hdmi        ]: vc4-hdmi - vc4-hdmi
+                      vc4-hdmi
+ 3 [Felucca_1      ]: USB-Audio - Felucca
+                      Hugelton Instruments Felucca at usb-20980000.usb-1.1, full speed"""
+TWO = ["Midi Through:Midi Through Port-0 14:0", "SMK-37+VA:SMK-37+VA MIDI 1 16:0", "Felucca:Felucca MIDI 1 20:0",
+       "Felucca:Felucca MIDI 1 28:0"]
+
+
+def test_two_fm1s_by_hub_port():
+    import sloop
+    cards = sloop.fm1_cards(CARDS)
+    assert cards == [3, 1]                                             # hub port 1 is A, whatever its card number
+    a = blemidi.UsbMidi(["felucca"], None)
+    b = blemidi.UsbMidi(["felucca"], None, slot=1)
+    assert a.pick(TWO, cards) == "Felucca:Felucca MIDI 1 28:0"        # card 3: client 16 + 4 x 3
+    assert b.pick(TWO, cards) == "Felucca:Felucca MIDI 1 20:0"
+    assert b.pick(TWO[:3], [1]) is None                                # one FM-1: no B
+    assert sloop.find_ports(TWO, card=1) == "Felucca:Felucca MIDI 1 20:0"
+
+
+def test_both_fm1s_play():
+    bridge = make_bridge()
+    bridge.usb_b = FakeUsb()
+    bridge.controllers = FakeControllers()
+    bridge.from_ble(ble_packet(b"\x90\x3c\x40"), "/dev/keys")
+    bridge.from_controllers(b"\x90\x40\x40")
+    assert bridge.usb.sent == bridge.usb_b.sent == [b"\x90\x3c\x40", b"\x90\x40\x40"]   # both play at first
+    bridge.from_fm1("FM-1 B", b"\x90\x30\x40")
+    assert bridge.usb.sent[-1] == b"\x90\x40\x40" and bridge.to_ble_sent == []         # B's own notes stay put
+    routes = blemidi.default_routes()
+    routes["BT>FM-1 B"]["transpose"] = -12
+    routes["USB>FM-1"]["on"] = False
+    bridge.set_routes(routes)
+    bridge.from_ble(ble_packet(b"\x90\x3c\x40"), "/dev/keys")
+    bridge.from_controllers(b"\x90\x40\x40")
+    assert bridge.usb.sent[-1] == b"\x90\x3c\x40" and bridge.usb_b.sent[-2:] == [b"\x90\x30\x40", b"\x90\x40\x40"]
+    bridge.enabled = False                                             # BLE MIDI off: USB keys still play
+    bridge.from_controllers(b"\x90\x41\x40")
+    assert bridge.usb_b.sent[-1] == b"\x90\x41\x40"
+
+
 if __name__ == "__main__":
     tests = [(n, f) for n, f in globals().items() if n.startswith("test_")]
     for name, fn in tests:

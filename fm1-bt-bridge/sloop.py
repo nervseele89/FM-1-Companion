@@ -39,6 +39,7 @@ NAMES = {0: "working project", 1: "settings", 2: "project A", 3: "project B", 4:
          11: "theme", 32: "sample USR1", 33: "sample USR2", 34: "sample USR3", 35: "sample USR4"}
 PORT_MATCH = ("felucca", "sloop", "fm-1", "fm1", "clipper")
 PORT_SKIP = ("through", "rtmidi", "pipewire", "midi-bridge")
+CARDS = Path("/proc/asound/cards")
 
 
 class SloopError(Exception):
@@ -102,20 +103,55 @@ class Reader:
 
 # ---------------------------------------------------------------- the MIDI link
 
-def find_ports(names):
-    """the FM-1's port among mido's names (the FM-1 is called "Felucca" under SLOOP and Felucca)"""
+def fm1_cards(text=None):
+    """The FM-1s' ALSA sound card numbers, FM-1 A first: in the order of the USB ports they're plugged into (a
+    hub's port 1 before its port 3), so A and B stay the same across reboots and replugs. [] without
+    /proc/asound. The box's audio, MIDI and library all go by this, so they agree on which FM-1 is which."""
+    if text is None:
+        try:
+            text = CARDS.read_text(errors="replace")
+        except OSError:
+            return []
+    lines, found = text.splitlines(), []
+    for i, line in enumerate(lines):
+        m = re.match(r"\s*(\d+) \[", line)
+        if not m:
+            continue
+        detail = lines[i + 1] if i + 1 < len(lines) else ""
+        both = f"{line} {detail}".lower()
+        if "usb-audio" not in both or not any(w in both for w in PORT_MATCH):
+            continue
+        path = re.search(r"\.usb-([\d.]+)", detail)          # "at usb-20980000.usb-1.3": hub port 3
+        key = tuple(int(p) for p in path.group(1).strip(".").split(".")) if path else (999,)
+        found.append((key, int(m.group(1))))
+    return [card for _, card in sorted(found)]
+
+
+def port_card(name):
+    """mido's port name -> its ALSA card number, or None: "Felucca:Felucca MIDI 1 28:0" -> 3 (a sound card's
+    MIDI is sequencer client 16 + 4 x its card number)"""
+    m = re.search(r"\s(\d+):\d+$", name)
+    client = int(m.group(1)) if m else 0
+    return (client - 16) // 4 if 16 <= client < 128 else None
+
+
+def find_ports(names, card=None):
+    """the FM-1's port among mido's names (the FM-1 is called "Felucca" under SLOOP and Felucca); with card,
+    that sound card's FM-1 only (two FM-1s are both called Felucca)"""
     names = [n for n in names if not any(s in n.lower() for s in PORT_SKIP)]
+    if card is not None:
+        names = [n for n in names if port_card(n) == card]
     return next((n for n in names if any(m in n.lower() for m in PORT_MATCH)), None)
 
 
 class Link:
     """The FM-1's MIDI in and out, with a queue of the editor frames it sends."""
 
-    def __init__(self, mido=None, time_scale=1.0):
+    def __init__(self, mido=None, time_scale=1.0, card=None):
         if mido is None:
             import mido
         self.mido, self.frames, self.time_scale = mido, queue.Queue(), time_scale    # (tests shorten timeouts)
-        inp, out = find_ports(mido.get_input_names()), find_ports(mido.get_output_names())
+        inp, out = find_ports(mido.get_input_names(), card), find_ports(mido.get_output_names(), card)
         if not inp or not out:
             raise SloopError("notfound", "FM-1 not found on USB")
         self.out = mido.open_output(out)

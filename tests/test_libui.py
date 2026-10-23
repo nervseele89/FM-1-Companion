@@ -15,6 +15,7 @@ TMP = Path(tempfile.mkdtemp(prefix="fm1-ui-"))
 os.environ.update(FM1_LIBRARY=str(TMP / "library"), XDG_RUNTIME_DIR=str(TMP / "run"), FM1_SD_LIBRARY=str(TMP / "sd"))
 
 import bridge  # noqa: E402
+import midiui  # noqa: E402
 import fake_fm1  # noqa: E402
 import library  # noqa: E402
 import sloop  # noqa: E402
@@ -501,6 +502,78 @@ def FIELD(app):
     return sampleui.FIELDS[app.ed["field"]][0]
 
 
+def test_two_fm1s():
+    app = make_app()
+    app.midi = FakeMidi()
+    at_row(app, "midi", "routes")
+    app.on_key("press")
+    assert len(app.matrix_lists()[0]) == 4                       # one FM-1: no B row
+    app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
+    assert app.matrix_lists() == (midiui.blemidi.SOURCES, midiui.blemidi.DESTINATIONS)
+    app.mx = [3, 0]
+    assert app.cell() == "FM-1 B>FM-1"
+    snap(app, "matrix-two")
+    app.on_key("press")
+    assert app.screen == "route" and app.route_title() == "FM-1 B > FM-1 A"
+    app.midi.usb_b = None                                         # B unplugged: the cursor stays on the grid
+    app.screen = "matrix"
+    app.mx = [4, 3]
+    assert app.cell() == "Box>USB"
+    # the library's FM-1: a Sloop row only with two
+    app.screen, app.settings_menu, app.setting = "settings", "sloop", 0
+    assert app.settings_rows()[0][0] == "backup"
+    app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
+    assert app.settings_rows()[0] == ("library_fm1", "FM-1", "A")
+    app.on_key("press")
+    assert app.state["library_fm1"] == "B"
+
+
+def node(i, name, card, cls="Audio/Source", **props):
+    return {"type": "PipeWire:Interface:Node", "id": i,
+            "info": {"props": dict({"media.class": cls, "node.name": name, "api.alsa.path": f"front:{card}"}, **props)}}
+
+
+def test_mixer():
+    smk = node(80, "alsa_input.usb-4c4a_SMK-37_VA_41-00.analog-stereo", 0, **{"alsa.card_name": "SMK-37+VA"})
+    a = node(81, "alsa_input.usb-H__gelton_Instruments_Felucca-00.analog-stereo", 3, **{"alsa.card_name": "Felucca"})
+    b = node(82, "alsa_input.usb-H__gelton_Instruments_Felucca-00.2.analog-stereo", 1, **{"alsa.card_name": "Felucca"})
+    spk = node(97, "bluez_output.20_18.1", 9, cls="Audio/Sink")
+    match = bridge.DEFAULTS["source_match"]
+    source, sink, source_b, others = bridge.pick_nodes([smk, a, b, spk], match, [3, 1])
+    assert (source["id"], sink["id"], source_b["id"], [n["id"] for n in others]) == (81, 97, 82, [80])
+    assert bridge.pick_nodes([smk, spk], match)[0] is None          # no FM-1: the keyboard's sound isn't taken
+    app = make_app()
+    app.source, app.source_b, app.others = source, None, []
+    app.screen, app.settings_menu, app.setting = "settings", "audio", 0
+    assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]      # one source: no mixer
+    app.others = others
+    rows = app.settings_rows()
+    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_usb", "USB keys level")]
+    app.source_b = source_b
+    assert [r[0] for r in app.settings_rows()[3:]] == ["mix_a", "mix_b", "mix_usb"]
+    app.setting = 4                                                  # FM-1 B: down 4 steps of 5%
+    keys(app, "press", "down", "down", "down", "down")
+    assert app.mix_level("b") == 80 and app.settings_rows()[4][2] == "± 80%"
+    snap(app, "settings-mixer")
+    keys(app, "left")
+    assert app.editing is None and app.mix_level("usb0") == 100
+
+
+def test_pw_watch():
+    watch = bridge.PwWatch()
+    assert watch.snapshot() is None                                 # no picture yet: not "all unplugged"
+    spk = node(97, "bluez_output.20_18.1", 9, cls="Audio/Sink")
+    spk["info"]["params"] = {"Props": [{"channelVolumes": [0.028959, 0.028959]}]}
+    watch.apply([spk, node(81, "alsa_input.usb-Felucca-00.analog-stereo", 3)])
+    assert bridge.node_volume(watch.snapshot(), 97) == 31          # wpctl's 0.31
+    watch.apply([{"id": 97, "info": {"params": {"Props": [{"channelVolumes": [0.125, 0.125]}]}}}])
+    objects = watch.snapshot()
+    assert bridge.node_volume(objects, 97) == 50                    # an update: the rest of the node kept
+    assert bridge.pick_nodes(objects, ["felucca"])[1]["id"] == 97
+    watch.apply([{"id": 81, "info": None}])                         # unplugged
+    assert bridge.pick_nodes(watch.snapshot(), ["felucca"])[0] is None
+
+
 def test_midi_matrix():
     app = make_app()
     app.midi = FakeMidi()
@@ -640,7 +713,8 @@ if __name__ == "__main__":
     for name, fn in [("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
                      ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate),
                      ("test_clock", test_clock), ("test_recordings", test_recordings),
-                     ("test_midi_matrix", test_midi_matrix), ("test_arp_rows_and_presets", test_arp_rows_and_presets),
+                     ("test_midi_matrix", test_midi_matrix), ("test_two_fm1s", test_two_fm1s), ("test_mixer", test_mixer), ("test_pw_watch", test_pw_watch),
+                     ("test_arp_rows_and_presets", test_arp_rows_and_presets),
                      ("test_web_link", test_web_link)]:
         fn()
         print("ok", name)

@@ -12,6 +12,8 @@ import re
 import threading
 import time
 
+import sloop                            # which FM-1 is A and which is B (fm1_cards, port_card)
+
 MIDI_SERVICE = "03b80e5a-ede8-4b33-a751-6ce34ec4c700"
 MIDI_IO = "7772e5db-3868-4112-a1a9-f2669d106bf3"
 PACKET = 20                 # ATT payload with the minimum MTU: safe with every central
@@ -128,31 +130,34 @@ FM1_IDS = ("0x1209:0x01", "pid.codes")    # the FM-1's USB ID, its ALSA name whe
 
 
 class UsbMidi:
-    """The FM-1's USB MIDI ports through mido, reopened when the FM-1 comes and goes. Found by its name (or USB
-    ID) only: anything else on a USB hub is a controller (UsbControllers), never taken for the FM-1."""
+    """One FM-1's USB MIDI ports through mido, reopened when the FM-1 comes and goes. Found by its name (or USB
+    ID) only: anything else on a USB hub is a controller (UsbControllers), never taken for the FM-1. With two
+    FM-1s on a hub, slot 0 is FM-1 A and slot 1 FM-1 B (sloop.fm1_cards: by hub port)."""
 
     SKIP = ("through", "rtmidi", "pipewire", "midi-bridge", "bluetooth")
 
-    def __init__(self, match, on_message):
+    def __init__(self, match, on_message, slot=0):
         import mido
-        self.mido = mido
+        self.mido, self.slot, self.cards = mido, slot, sloop.fm1_cards
         self.match, self.on_message = tuple(m.lower() for m in match) + FM1_IDS, on_message
         self.name, self.inp, self.out = None, None, None
         self.stream = MidiStream()
         self.last_activity = 0.0
         self.lock = threading.Lock()
 
-    def pick(self, names):
-        names = [n for n in names if not any(s in n.lower() for s in self.SKIP)]
-        for n in names:
-            if any(m in n.lower() for m in self.match):
-                return n
-        return None
+    def pick(self, names, cards=None):
+        names = [n for n in names if not any(s in n.lower() for s in self.SKIP)
+                 and any(m in n.lower() for m in self.match)]
+        if cards:                             # the FM-1s' sound cards, A first: this slot's one
+            card = cards[self.slot] if self.slot < len(cards) else None
+            return next((n for n in names if sloop.port_card(n) == card), None)
+        return names[self.slot] if self.slot < len(names) else None
 
     def poll(self):
         try:
-            want_in = self.pick(self.mido.get_input_names())
-            want_out = self.pick(self.mido.get_output_names())
+            cards = self.cards()
+            want_in = self.pick(self.mido.get_input_names(), cards)
+            want_out = self.pick(self.mido.get_output_names(), cards)
         except Exception:
             want_in = want_out = None
         if want_in == self.name and (want_in is None or self.out is not None):
@@ -620,7 +625,8 @@ class UsbControllers:
 
 # ---------------------------------------------------------------- the MIDI matrix
 
-SOURCES, DESTINATIONS = ("BT", "USB", "FM-1", "Box"), ("FM-1", "BT", "USB")
+SOURCES, DESTINATIONS = ("BT", "USB", "FM-1", "FM-1 B", "Box"), ("FM-1", "FM-1 B", "BT", "USB")
+FM1S = ("FM-1", "FM-1 B")               # FM-1 A (the only one, usually) and a second FM-1 on the hub
 ROUTES = tuple(f"{s}>{d}" for s in SOURCES for d in DESTINATIONS if s != d)    # "Box": its clock, Start/Stop
 DEFAULT_ROUTE = {"on": True, "channels": "same", "transpose": 0, "velocity": "normal", "fixed": 100,
                  "drop_clock": False, "drop_aftertouch": False, "drop_bend": False,
@@ -633,7 +639,8 @@ ARPS = ("up", "down", "updown", "played", "random")
 ARP_RATES = {"1/4": 24, "1/8": 12, "1/8T": 8, "1/16": 6}  # clock ticks (24 a quarter note) per step
 
 
-OFF_AT_FIRST = ("USB>BT", "FM-1>USB", "BT>USB", "Box>USB")   # USB controllers play the FM-1; the rest is a choice
+# USB controllers play the FM-1, and both FM-1s play together; the rest is a choice
+OFF_AT_FIRST = ("USB>BT", "FM-1>USB", "BT>USB", "Box>USB", "FM-1>FM-1 B", "FM-1 B>FM-1", "FM-1 B>BT", "FM-1 B>USB")
 
 
 def route_default(key):
@@ -886,11 +893,12 @@ class MidiBridge:
         self.pending, self.flush_queued = [], False
         self.lock = threading.Lock()
         self.usb = UsbMidi(source_match, self.from_usb)
+        self.usb_b = UsbMidi(source_match, lambda message: self.from_fm1("FM-1 B", message), slot=1)
         self.controllers = UsbControllers(self.usb, self.from_controllers)
         self.ble_stream = MidiStream()
         self.clock_mode, self.bpm, self.playing = "follow", 120.0, False     # "follow" or "box"
         self.box_count, self.box_bar = 0, None      # the box clock's ticks since Start, its bar's start
-        self.watch = {"FM-1": ClockWatch(), "BT": ClockWatch(), "USB": ClockWatch()}
+        self.watch = {source: ClockWatch() for source in SOURCES if source != "Box"}
         self.routes = {key: Route(route_default(key)) for key in ROUTES}
         self.held, self.chan_seen = {}, [0.0] * 16      # for the MIDI meter: notes down, channel traffic
 
@@ -902,12 +910,13 @@ class MidiBridge:
         """messages out of a route, to its destination"""
         if not messages:
             return
-        if key.endswith(">FM-1"):
-            if self.enabled and not self.paused:
-                self.usb.send_messages(messages)
+        dest = key.split(">")[1]
+        if dest in FM1S:                       # BLE MIDI off stops Bluetooth only; a flash pauses everything
+            if not self.paused and (self.enabled or not key.startswith("BT>")):
+                (self.usb if dest == "FM-1" else self.usb_b).send_messages(messages)
                 for m in messages:
                     self.note_watch(m, time.monotonic())
-        elif key.endswith(">USB"):
+        elif dest == "USB":
             self.controllers.send_messages(messages)
         else:
             for m in messages:
@@ -977,12 +986,9 @@ class MidiBridge:
 
     def send_all(self, message):
         """the box's own clock and Start/Stop, where the matrix's Box routes are on"""
-        if self.routes["Box>FM-1"].s["on"]:
-            self.usb.send_messages([message])
-        if self.routes["Box>BT"].s["on"]:
-            self.to_ble(message)
-        if self.routes["Box>USB"].s["on"]:
-            self.controllers.send_messages([message])
+        for dest in DESTINATIONS:
+            if self.routes[f"Box>{dest}"].s["on"]:
+                self.deliver(f"Box>{dest}", [message])
 
     def clock_status(self, now):
         """{"bpm", "source", "playing"} for the screen, or None"""
@@ -1031,18 +1037,26 @@ class MidiBridge:
 
     # USB -> BLE: queue, then send from the GLib thread in as few packets as possible
     def from_usb(self, message):
-        if is_library_sysex(message) or not self.passes("FM-1", message):
+        self.from_fm1("FM-1", message)
+
+    def from_fm1(self, source, message):
+        """from FM-1 A or B (source), on rtmidi's thread"""
+        if is_library_sysex(message) or not self.passes(source, message):
             return
         self.note_watch(message, time.monotonic())
-        for key in ("FM-1>BT", "FM-1>USB"):
-            self.deliver(key, self.routes[key].apply_all(message))
+        self.route_from(source, message)
+
+    def route_from(self, source, message):
+        for dest in DESTINATIONS:
+            if dest != source:
+                key = f"{source}>{dest}"
+                self.deliver(key, self.routes[key].apply_all(message))
 
     # USB controllers -> the FM-1 (and Bluetooth, if that route is on); called on rtmidi's thread
     def from_controllers(self, message):
         if is_library_sysex(message) or not self.passes("USB", message):
             return
-        for key in ("USB>FM-1", "USB>BT"):
-            self.deliver(key, self.routes[key].apply_all(message))
+        self.route_from("USB", message)
 
     def to_ble(self, message):
         if not (self.bluez and self.enabled and self.peer):
@@ -1070,8 +1084,7 @@ class MidiBridge:
         self.last_ble = time.monotonic()
         for m in self.ble_stream.feed(strip_timestamps(packet)):
             if self.passes("BT", m):
-                for key in ("BT>FM-1", "BT>USB"):
-                    self.deliver(key, self.routes[key].apply_all(m))
+                self.route_from("BT", m)
         log_timing(packet, self.last_ble)
 
     def lookup_name(self):
@@ -1100,13 +1113,14 @@ class MidiBridge:
     # from the app's threads
     def poll(self):
         self.usb.poll()
+        self.usb_b.poll()
         self.controllers.poll()
 
     def usb_label(self):
         return self.usb.label()
 
     def activity(self):
-        return max(self.last_ble, self.usb.last_activity, self.controllers.last_activity)
+        return max(self.last_ble, self.usb.last_activity, self.usb_b.last_activity, self.controllers.last_activity)
 
     def set_enabled(self, on):
         self.enabled = on
@@ -1161,7 +1175,7 @@ def run_child(conn, source_match, enabled):
             next_poll = now + 3                # a USB controller plugged in shows up within 3 s
         metro.ensure(*wanted)                  # starts, stops, or restarts it if its stream ended
         status = {"peer": bridge.peer, "error": bridge.error, "usb": bridge.usb_label(),
-                  "controllers": bridge.controllers.names(),
+                  "controllers": bridge.controllers.names(), "usb_b": bridge.usb_b.label(),
                   "activity": round(bridge.activity(), 1),  # 0.1 s steps: at most ~5 updates a second
                   "clock": bridge.clock_status(now)}
         status["notes"], status["chans"] = bridge.notes_status(now)
@@ -1189,6 +1203,7 @@ class MidiProcess:
         self.pairing_until = 0.0
         self.usb, self.last_activity = None, 0.0
         self.controllers = []               # USB MIDI controllers' names
+        self.usb_b = None                   # a second FM-1's port name, when there is one
         self.clock = None                   # {"bpm", "source", "playing"} while there's a clock
         self.notes, self.chans = [], 0      # for the MIDI meter
 
@@ -1206,6 +1221,7 @@ class MidiProcess:
             self.peer, self.error = status["peer"], status["error"]
             self.usb, self.last_activity = status["usb"], status["activity"]
             self.controllers = status.get("controllers") or []
+            self.usb_b = status.get("usb_b")
             self.clock = status.get("clock")
             self.notes, self.chans = status.get("notes") or [], status.get("chans", 0)
 

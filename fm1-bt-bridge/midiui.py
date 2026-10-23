@@ -12,7 +12,9 @@ import time
 
 import blemidi
 
-SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "FM-1": "FM-1", "Box": "Box clock"}
+SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "FM-1": "FM-1", "FM-1 B": "FM-1 B", "Box": "Box clock"}
+SHORT_NAMES = {"BT": "BT", "USB": "USB", "FM-1": "FM-1 A", "FM-1 B": "FM-1 B", "Box": "Clock"}   # five rows
+SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB"}
 VELOCITY = ["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
 CHANNELS = ["same"] + list(range(16)) + ["custom"]      # all to one channel (0-15), or a table
 CYCLES = {"chord": list(blemidi.CHORDS), "arp": list(blemidi.ARPS), "arp_rate": list(blemidi.ARP_RATES),
@@ -47,8 +49,19 @@ class MidiScreens:
         if self.midi:
             self.midi.set_routes(routes)
 
+    def two_fm1s(self):
+        return bool(getattr(self.midi, "usb_b", None))
+
+    def matrix_lists(self):
+        """(sources, destinations) on the matrix: FM-1 B's row and column only while a second FM-1 is in"""
+        if self.two_fm1s():
+            return blemidi.SOURCES, blemidi.DESTINATIONS
+        return ([s for s in blemidi.SOURCES if s != "FM-1 B"], [d for d in blemidi.DESTINATIONS if d != "FM-1 B"])
+
     def cell(self):
-        source, dest = blemidi.SOURCES[self.mx[0]], blemidi.DESTINATIONS[self.mx[1]]
+        sources, dests = self.matrix_lists()
+        self.mx = [min(self.mx[0], len(sources) - 1), min(self.mx[1], len(dests) - 1)]
+        source, dest = sources[self.mx[0]], dests[self.mx[1]]
         return f"{source}>{dest}" if source != dest else None
 
     def open_matrix(self):
@@ -61,8 +74,8 @@ class MidiScreens:
 
     def toggle_keys(self, name):
         on = not self.keys_route()[name]
-        self.set_route_of("BT>FM-1", **{name: on})
-        self.set_route_of("USB>FM-1", **{name: on})
+        for key in ("BT>FM-1", "USB>FM-1", "BT>FM-1 B", "USB>FM-1 B"):
+            self.set_route_of(key, **{name: on})
         r = self.keys_route()
         what = f"Arp {r['arp']} {r['arp_rate']}" if name == "arp_on" else f"Chord {r['chord']}"
         self.say(f"{what}: {'on' if on else 'off'}", 1.5)
@@ -123,10 +136,11 @@ class MidiScreens:
                 self.screen = "settings"
             return True
         if self.screen == "matrix":
+            sources, dests = self.matrix_lists()
             if key in ("up", "down"):
-                self.mx[0] = (self.mx[0] + (1 if key == "down" else -1)) % len(blemidi.SOURCES)
+                self.mx[0] = (self.mx[0] + (1 if key == "down" else -1)) % len(sources)
             elif key == "right":
-                self.mx[1] = min(len(blemidi.DESTINATIONS) - 1, self.mx[1] + 1)
+                self.mx[1] = min(len(dests) - 1, self.mx[1] + 1)
             elif key == "left":
                 if self.mx[1]:
                     self.mx[1] -= 1
@@ -229,29 +243,34 @@ class MidiScreens:
 
     def route_title(self):
         source, dest = self.route_key.split(">")
-        return f"{'Box' if source == 'Box' else source} > {dest}"
+        name = (lambda n: "FM-1 A" if n == "FM-1" else n) if self.two_fm1s() else (lambda n: n)
+        return f"{name(source)} > {name(dest)}"
 
     def midi_view(self):
         if self.screen not in ("matrix", "route", "chanmap", "presets"):
             return None
         return (tuple(self.mx), self.route_key, self.route_row, self.route_edit, self.chan_row, self.chan_edit,
                 self.preset_row, self.preset_menu, json.dumps(self.state.get("routes"), sort_keys=True),
-                json.dumps(self.presets(), sort_keys=True))
+                json.dumps(self.presets(), sort_keys=True), self.two_fm1s())
 
     # ---- drawing
 
     def draw_matrix(self, d):
-        d.text((0, 0), "Routes", font=self.f_title, fill=1)            # four sources: the columns go up here
-        cols = (58, 82, 106)
-        for x, dest in zip(cols, blemidi.DESTINATIONS):
-            w = d.textlength(dest, font=self.f_small)
-            d.text((x + 6 - w / 2, 2), dest, font=self.f_small, fill=1)
+        d.text((0, 0), "Routes", font=self.f_title, fill=1)            # the columns go up here
+        sources, dests = self.matrix_lists()
+        two = len(dests) > 3                  # FM-1 A and B: five rows, four columns, short names
+        cols, pitch, names = ((50, 70, 90, 110), 10, SHORT_NAMES) if two else ((58, 82, 106), 12, SOURCE_NAMES)
+        self.mx = [min(self.mx[0], len(sources) - 1), min(self.mx[1], len(dests) - 1)]
+        for x, dest in zip(cols, dests):
+            label = SHORT_DESTS[dest] if two else dest
+            w = d.textlength(label, font=self.f_small)
+            d.text((x + 6 - w / 2, 2), label, font=self.f_small, fill=1)
         d.line((0, 13, 127, 13), fill=1)
         routes = self.routes()
-        for row, source in enumerate(blemidi.SOURCES):
-            y = 18 + row * 12
-            d.text((0, y - 1), SOURCE_NAMES[source], font=self.f_small, fill=1)
-            for col, (x, dest) in enumerate(zip(cols, blemidi.DESTINATIONS)):
+        for row, source in enumerate(sources):
+            y = (15 if two else 18) + row * pitch
+            d.text((0, y - 1 - (1 if two else 0)), names[source], font=self.f_small, fill=1)
+            for col, (x, dest) in enumerate(zip(cols, dests)):
                 if source == dest:
                     d.line((x + 3, y + 3, x + 9, y + 3), fill=1)          # no route to itself
                 elif routes[f"{source}>{dest}"]["on"]:
@@ -259,7 +278,7 @@ class MidiScreens:
                 else:
                     d.rectangle((x, y, x + 12, y + 6), outline=1)
                 if [row, col] == self.mx:
-                    d.rectangle((x - 3, y - 2, x + 15, y + 8), outline=1)
+                    d.rectangle((x - 3, y - 2, x + 15, min(63, y + 8)), outline=1)
 
     def draw_rows(self, d, title, rows, cursor, editing, hint):
         """a scrolling list of (label, value) rows like Settings; the edited value marked with ±"""

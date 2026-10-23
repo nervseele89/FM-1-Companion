@@ -128,6 +128,20 @@ def scenes(app):
     def matrix():
         app.screen, app.mx = "matrix", [0, 0]
 
+    def matrix_two():                         # a second FM-1 on the hub: its row and column
+        app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
+        routes = blemidi_routes()
+        routes["USB>FM-1 B"]["on"] = False    # the SMK-37 plays A, Bluetooth plays B
+        routes["BT>FM-1"]["on"] = False
+        app.state["routes"] = routes
+        app.screen, app.mx = "matrix", [1, 1]
+
+    def settings_mixer():                     # FM-1 A and B and the SMK-37's own synth
+        app.source_b = dict(app.source, id=3, name="alsa_input.usb-Felucca-00.2")
+        app.others = [{"id": 4, "name": "alsa_input.usb-SMK-37", "label": "SMK-37+VA"}]
+        app.state["mix"] = {"a": 100, "b": 80, "usb": 175}
+        app.screen, app.settings_menu, app.setting = "settings", "audio", 5
+
     def route():
         import blemidi
         routes = blemidi.default_routes()
@@ -173,10 +187,15 @@ def scenes(app):
 
     return [("status", status), ("status-charging", charging), ("status-rec", recording), ("settings", settings),
             ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("settings-midi", settings_midi), ("status-volume", volume),
-            ("matrix", matrix), ("route", route), ("speakers", speakers),
+            ("matrix", matrix), ("matrix-two", matrix_two), ("settings-mixer", settings_mixer), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings),
             ("editor", editor), ("editor-note", editor_note),
             ("player", player), ("job", job)]
+
+
+def blemidi_routes():
+    import blemidi
+    return blemidi.default_routes()
 
 
 def write_take(path):

@@ -18,14 +18,15 @@ own screen and joystick or from your phone.
 - **Wireless audio and MIDI:** the FM-1 plays on Bluetooth headphones or a speaker, and the box shows up
   as a Bluetooth MIDI device, **"FM-1 Companion"**, so a keyboard, iPad, phone or computer can play the FM-1
   and hear back what it sends.
-- **USB keyboards:** put a USB hub between the box and the FM-1 and plug in up to four USB MIDI keyboards
-  or controllers. They're found by themselves and play the FM-1 straight away.
+- **USB keyboards and a second FM-1:** put a USB hub between the box and the FM-1 and plug in up to four
+  USB MIDI keyboards or controllers, and a second FM-1 if you have one. They're found by themselves and play
+  straight away; a mixer sets the level of each FM-1 and of a keyboard's own synth.
 - **A recorder and a sample editor:** record the FM-1 to WAV from the box, play takes back on the speaker,
   and edit a take (or any sample) into a new sample: trim it, fade it, normalize or reverse it, and tune it
   to the note it plays, ready to load into the FM-1.
 - **Playing tools:** a MIDI clock (follow your keyboard's clock, or be the master with tap tempo and
   Start/Stop), a metronome, an arpeggiator and chord memory.
-- **A MIDI matrix:** route Bluetooth, USB keyboards, the FM-1 and the box to each other; transpose,
+- **A MIDI matrix:** route Bluetooth, USB keyboards, the FM-1s and the box to each other; transpose,
   re-channel, reshape velocity and filter, with four presets.
 - **Eleven meters:** level bars, VU needles, spectrum, scope, a reel-to-reel tape deck, a tuner, a MIDI
   keyboard view, a waterfall, a stereo goniometer, a level history and a beat counter.
@@ -44,43 +45,62 @@ own screen and joystick or from your phone.
                             ┌── Bluetooth audio ──▶ headphones / speaker
                             ├◀── Bluetooth MIDI ──▶ keyboard / iPad / phone / Mac
 FM-1 ◀── USB ──▶ Pi Zero W ─┤
- (audio, MIDI, backups,     ├◀── USB hub ─────────▶ USB MIDI keyboards
+ (audio, MIDI, backups,     ├◀── USB hub ─────────▶ USB MIDI keyboards, a second FM-1
   samples, firmware)        ├◀── Wi-Fi ───────────▶ web app on your phone
                             └── OLED + joystick: meters, recorder, sample editor
 ```
 
 Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 and 2.8 on the FM-1, a JBL Go 3
 speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI (including its clock) and over USB through an
-ASMedia ASM1074 USB hub. The library was tested on the real FM-1 with a backup, a restore (read back byte for byte), a project load, a sample load and the
+ASMedia ASM1074 USB hub, two FM-1s together on that hub with the SMK-37 running Baud Girl. The library was
+tested on the real FM-1 with a backup, a restore (read back byte for byte), a project load, a sample load and the
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
-## What's new in v2.7
+## What's new in v2.8
 
-| A USB keyboard playing the FM-1 | The matrix, with USB |
+| Two FM-1s in the MIDI routes | The mixer |
 |---|---|
-| ![The home screen: MIDI SMK-37+VA](docs/images/screen-status.png) | ![MIDI routes: Bluetooth, USB keys, FM-1 and Box clock rows; FM-1, BT and USB columns](docs/images/screen-matrix.png) |
-| ![Settings › MIDI: USB keys 1](docs/images/screen-settings-midi.png) | |
+| ![MIDI routes with FM-1 A and FM-1 B rows and A and B columns](docs/images/screen-matrix-two.png) | ![Settings › Audio: FM-1 A level 100%, FM-1 B level 80%, USB keys level 175%](docs/images/screen-settings-mixer.png) |
 
 **New**
-- **USB MIDI keyboards:** plug a USB hub into the box, the FM-1 and up to four USB MIDI keyboards or
-  controllers into the hub, and the keyboards play the FM-1, no Bluetooth needed. They're found within a
-  few seconds of plugging in, and unplugging one is fine. Tested with an M-VAVE SMK-37.
-- **USB in the MIDI matrix:** a *USB keys* row and a *USB* column, with all the usual route options
-  (channels, transpose, velocity, filters, chord memory and the arpeggiator). USB keys → FM-1 is on at first;
-  sending to the keyboards, and USB keys → Bluetooth, are yours to switch on. The Arp and Chord quick
-  switches work for USB keyboards too.
-- **Where you see them:** the home screen names the keyboard ("SMK-37+VA", or "1 USB + …" next to a
-  Bluetooth device), Settings › MIDI › **USB keys** counts and lists them, and the web app shows them on its
-  status page and in its routes grid.
-- **The FM-1 is only ever found by its name** (or its USB ID), so a keyboard is never mistaken for it, and
-  with no FM-1 plugged in the box no longer picks up a keyboard's own audio as the FM-1's.
+- **Two FM-1s at once:** plug a second FM-1 into the USB hub and both play. They're **FM-1 A** and
+  **FM-1 B** by the hub port they're on (the lower port is A), so they keep their names across reboots and
+  replugs. The home screen shows "SLOOP 2.8 + B".
+- **FM-1 B in the MIDI routes:** while it's plugged in, the routes get an *FM-1 B* row and a *B* column with
+  all the usual options. At first Bluetooth, USB keyboards and the box's clock play both FM-1s together;
+  split them by switching routes off, for example the SMK-37 on A and Bluetooth on B.
+- **An audio mixer:** with more than one sound source, each gets its own level, 0–200%: FM-1 A, FM-1 B and
+  a USB keyboard's own synth (an SMK-37 running Baud Girl, say). They're added together before Bluetooth,
+  and recordings and the meters hear the whole mix. Settings › Audio on the box, the Mixer sliders in the
+  web app.
+- **Sloop jobs pick their FM-1:** with two plugged in, Settings › Sloop › **FM-1** chooses which one
+  backups, restores and loads go to. Firmware installs ask you to unplug the other one first.
+- **Faster:** the box now keeps one connection to the audio system open instead of opening a new one
+  every few seconds. Each of those cost the Pi Zero 1–2 seconds of CPU, which made playing lag and the
+  controls slow with three sound sources. Audio now takes about half the CPU it did.
 
-**Good to know:** devices behind a USB 2 hub time out on the Pi Zero at high speed, so the installer now
-sets the box's USB to full speed, 12 Mbit/s (`dwc_otg.speed=1`, from the next boot); the FM-1 and USB
-keyboards are 12 Mbit/s devices anyway. A
-bonus: with the FM-1 on the hub, you can unplug it from the hub and plug it back in while the box runs, with
-no reboot.
+**Fixed**
+- Turning BLE MIDI off no longer silences USB keyboards (it was meant for Bluetooth only).
+- With no FM-1 plugged in, a USB keyboard's own sound is never taken for the FM-1's.
+- A second FM-1's sound warbled and crackled: re-timing it to the first FM-1's clock now has the slack it
+  needs.
+
+**Good to know:** two USB devices never tick at exactly the same speed, so FM-1 A keeps the clock and the
+others are re-timed to it, out of earshot. The Audio rate is best left at 48 kHz (the default): it's what
+Bluetooth speakers run at, and 44.1 kHz costs the Pi an extra conversion.
+
+<details><summary>Earlier: v2.7</summary>
+
+USB MIDI keyboards and controllers through a USB hub (up to four, found by themselves), a *USB keys* row
+and *USB* column in the MIDI routes, the keyboard named on the home screen, Settings › MIDI › USB keys and the
+web app; the installer sets the Pi's USB to full speed so a hub works. With the FM-1 on the hub, it can be
+unplugged and plugged back in without a reboot (v2.7.1).
+
+| A USB keyboard playing the FM-1 | Settings › MIDI |
+|---|---|
+| ![The home screen: MIDI SMK-37+VA](docs/images/screen-status.png) | ![Settings › MIDI: USB keys 1](docs/images/screen-settings-midi.png) |
+</details>
 
 <details><summary>Earlier: v2.6</summary>
 
@@ -136,6 +156,8 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 | **Sloop ›:** back up, restore, load a project or a sample, the sample level, auto backup, the SD card. Writes ask you to hold the joystick press for 2 seconds; restores and project loads back up first. | **FM-1 ›:** what the FM-1 runs, and installing firmware (SLOOP and Clipper download from GitHub with Wi-Fi on). |
 | ![MIDI](docs/images/screen-settings-midi.png) | ![MIDI routes](docs/images/screen-matrix.png) |
 | **MIDI ›:** Bluetooth MIDI, pairing, the USB keyboards plugged in (press lists them), the routes and their presets. | **MIDI routes:** rows are sources (Bluetooth, USB keyboards, the FM-1, the box's clock), columns destinations; a filled square is a route that's on. Press opens it. |
+| ![Two FM-1s](docs/images/screen-matrix-two.png) | ![The mixer](docs/images/screen-settings-mixer.png) |
+| **Two FM-1s:** FM-1 B's row and column (A and B) appear while it's plugged in. Here the SMK-37 plays A and Bluetooth plays B. | **The mixer** (Settings › Audio, with more than one sound source): a level for each FM-1 and a USB keyboard's own synth, up to 200%. |
 | ![A route](docs/images/screen-route.png) | ![Volume](docs/images/screen-status-volume.png) |
 | **A route:** here the keyboard is played an octave up with a soft velocity curve. | **Volume:** up/down on the home screen, in 2% steps, shown big for a moment. |
 | ![Firmware install](docs/images/screen-job.png) | ![A recording](docs/images/screen-recordings.png) |
@@ -187,7 +209,7 @@ sudo reboot
 
 | Path | What it is |
 |---|---|
-| `fm1-bt-bridge/bridge.py` | The OLED app: status and settings screens, headphone pairing, audio routing (PipeWire), keys |
+| `fm1-bt-bridge/bridge.py` | The OLED app: status and settings screens, headphone pairing, audio routing and the mixer (PipeWire), keys |
 | `fm1-bt-bridge/blemidi.py` | The Bluetooth LE MIDI service (BlueZ), its link to the FM-1's USB MIDI and to USB keyboards, the clock, the MIDI matrix with its arp and chord memory, and the metronome, in a process of its own |
 | `fm1-bt-bridge/libui.py` | The Sloop and FM-1 settings, recordings and their screens on the box |
 | `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
@@ -197,7 +219,7 @@ sudo reboot
 | `fm1-bt-bridge/sampler.py` | The sample editor's sums (trim, fades, normalize, reverse, the note), shared by the box and the web page |
 | `fm1-bt-bridge/metronome.py` | The metronome's click stream (run by the MIDI process) |
 | `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
-| `fm1-bt-bridge/sloop.py` | SLOOP's editor protocol over USB MIDI: backups, projects, sample slots |
+| `fm1-bt-bridge/sloop.py` | SLOOP's editor protocol over USB MIDI: backups, projects, sample slots; which FM-1 is A and which is B |
 | `fm1-bt-bridge/samplefast.py` | SLOOP's sample converter made faster, with the same output byte for byte |
 | `fm1-bt-bridge/web.py` | The web app (http://fm1bridge.local while Wi-Fi is on) |
 | `fm1-bt-bridge/weblink.py` | How the box and the web app talk: the box's status out, the page's commands in |
@@ -222,6 +244,8 @@ sudo reboot
 - **Plugging the FM-1 straight into the box while the Pi is running can reboot the Pi.** The Zero's USB
   port has no current limit. Connect the FM-1 first, or put a USB hub in between: unplugging the FM-1 from
   the hub and plugging it back in doesn't reboot the box (plugging the hub itself into the box may still).
+- **With two FM-1s (or a keyboard's synth), recordings need the speaker connected** to hear the whole mix;
+  without one they record FM-1 A. Firmware installs wait until only one FM-1 is plugged in.
 - **USB runs at 12 Mbit/s** so a hub works on the Pi Zero. Fine for MIDI and the FM-1's audio, but a
   USB 2 device that needs high speed (a fast USB stick, say) is slower behind it.
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send

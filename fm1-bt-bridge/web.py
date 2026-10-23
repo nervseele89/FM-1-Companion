@@ -56,6 +56,8 @@ def check_command(c):
               "clock_mode": value in ("follow", "box"), "click": value in ("low", "mid", "high"),
               "audio_rate": value in (44100, 48000),
               "volume": number and int(value) == value and 0 <= value <= 100}.get(key)
+        if key in ("mix_a", "mix_b", "mix_usb"):
+            ok = number and int(value) == value and 0 <= value <= 200
         if not ok:
             raise ValueError(f"bad setting {key!r}")
         return {"cmd": cmd, "key": key, "value": value}
@@ -403,6 +405,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
   <div class="line"><span class="k">Speaker</span><span class="v" id="s-spk">–</span></div>
   <div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">Volume</span><b id="s-volv">–</b></div>
     <input type="range" id="s-vol" min="0" max="100" step="2"></div>
+  <div id="s-mix"></div>
   <div class="line"><span class="k">Audio rate</span><div class="seg" id="s-rate"><button data-v="44100">44.1</button><button data-v="48000">48 kHz</button></div></div>
 </section>
 <section><h2>Clock</h2>
@@ -556,6 +559,7 @@ function renderStatus() {
   $("s-spk").textContent = st.speaker || (st.connecting ? "connecting…" : (st.speaker_name ? st.speaker_name + " (off)" : "none"));
   if (Date.now() > editingUntil) { if (st.volume != null) $("s-vol").value = st.volume; $("s-tempo").value = s.bpm; }
   $("s-volv").textContent = st.volume != null ? st.volume + "%" : "–"; $("s-vol").disabled = st.volume == null;
+  renderMixer(st);
   seg("s-rate", s.audio_rate, (v) => set("audio_rate", +v));
   const c = st.clock;
   $("s-bpm").textContent = c ? c.bpm : "–";
@@ -569,18 +573,46 @@ function renderStatus() {
   $("s-midi").textContent = st.midi.error ? "Bluetooth error" : !st.midi.enabled ? "off" : (st.midi.peer || "waiting");
   $("s-usbkeys").textContent = (st.midi.controllers || []).join(", ") || "none";
 }
+// the mixer: a level for each sound source while there's more than one (FM-1 A and B, a USB keyboard's synth)
+const MIX_NAMES = {a: "FM-1 A", b: "FM-1 B", usb: "USB keys"};
+let shownMix = "", mixUntil = 0, mixTimer;
+function renderMixer(st) {
+  const m = st.mixer, keys = m ? Object.keys(m).join() : "";
+  if (keys !== shownMix) {
+    shownMix = keys;
+    $("s-mix").innerHTML = !m ? "" : `<div class="line"><span class="k">Mixer</span></div>` + Object.keys(m).map((k) =>
+      `<div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">${m.b == null && k === "a" ? "FM-1" : MIX_NAMES[k]}</span><b id="mx-${k}v"></b></div>
+       <input type="range" id="mx-${k}" min="0" max="200" step="5" oninput="mixSet('${k}', this.value)"></div>`).join("");
+  }
+  if (!m || Date.now() < mixUntil) return;
+  for (const k of Object.keys(m)) { $(`mx-${k}`).value = m[k]; $(`mx-${k}v`).textContent = m[k] + "%"; }
+}
+function mixSet(k, v) {
+  mixUntil = Date.now() + 2500; $(`mx-${k}v`).textContent = v + "%";
+  clearTimeout(mixTimer); mixTimer = setTimeout(() => set(`mix_${k}`, +v), 250);
+}
 $("s-vol").oninput = (e) => { editingUntil = Date.now() + 2500; $("s-volv").textContent = e.target.value + "%"; clearTimeout(volTimer); volTimer = setTimeout(() => set("volume", +e.target.value), 250); };
 $("s-tempo").onchange = (e) => { const v = Math.max(30, Math.min(300, Math.round(+e.target.value || 120))); e.target.value = v; set("bpm", v); };
 function bump(d) { editingUntil = Date.now() + 2500; const el = $("s-tempo"); el.value = Math.max(30, Math.min(300, (+el.value || 120) + d)); clearTimeout(tempoTimer); tempoTimer = setTimeout(() => set("bpm", +el.value), 350); }
 function toggleRec() { cmd({cmd:"record", value: st && st.recording != null ? "stop" : "start"}, false).then(() => setTimeout(refresh, 900)); }
 
 // ---------------------------------------------------------------- MIDI tab
-const SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "FM-1":"FM-1", "Box":"Box clock"}, DESTS = ["FM-1", "BT", "USB"];
+// FM-1 B's row and column only while a second FM-1 is plugged in (then the first is FM-1 A)
+const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB"];
+let twoFm1 = false, SOURCES = {}, DESTS = [];
+function setFm1s(two) {
+  twoFm1 = two;
+  SOURCES = Object.fromEntries(Object.entries(ALL_SOURCES).filter(([k]) => two || k !== "FM-1 B").map(([k, v]) => [k, two && k === "FM-1" ? "FM-1 A" : v]));
+  DESTS = ALL_DESTS.filter((d) => two || d !== "FM-1 B");
+  if (!two && sel.includes("FM-1 B")) sel = "BT>FM-1";
+}
+const destName = (d) => d === "BT" ? "Bluetooth" : twoFm1 && d === "FM-1" ? "FM-1 A" : d;
 const CHORDS = ["oct","5th","maj","min","7","maj7","m7"], ARPS = ["up","down","updown","played","random"], RATES = ["1/4","1/8","1/8T","1/16"];
 let routes = null, sel = "BT>FM-1", routesDirtyUntil = 0, saveTimer;
+setFm1s(false);
 function renderMatrix() {
   if (!routes) { $("mx").innerHTML = `<tr><td class="dim">Waiting for the box…</td></tr>`; return; }
-  $("mx").innerHTML = `<tr><th></th>${DESTS.map((d) => `<th>to ${d === "BT" ? "Bluetooth" : d}</th>`).join("")}</tr>` +
+  $("mx").innerHTML = `<tr><th></th>${DESTS.map((d) => `<th>to ${destName(d)}</th>`).join("")}</tr>` +
     Object.keys(SOURCES).map((s) => `<tr><th>${SOURCES[s]}</th>${DESTS.map((d) => {
       const key = `${s}>${d}`;
       if (s === d) return `<td class="dim" style="text-align:center">–</td>`;
@@ -597,7 +629,7 @@ const sw = (field, on) => `<label class="sw"><input type="checkbox" ${on ? "chec
 function renderEditor() {
   if (!routes) return;
   const r = routes[sel], [s, d] = sel.split(">");
-  $("ed-title").textContent = `${SOURCES[s]} → ${d === "BT" ? "Bluetooth" : d}`;
+  $("ed-title").textContent = `${SOURCES[s]} → ${destName(d)}`;
   let h = `<div class="line"><span class="k">Route</span>${sw("on", r.on)}</div>`;
   if (s !== "Box") {
     const ch = r.channels, mode = ch === "same" ? "same" : Array.isArray(ch) ? "custom" : "all";
@@ -813,6 +845,7 @@ async function status() {
   // redraw the MIDI tab only when the box's routes or presets changed: a redraw closes an open dropdown,
   // and the presets' name fields mustn't change under your fingers
   const r = JSON.stringify(st.routes), p = JSON.stringify(st.presets || {});
+  if (!!st.midi.usb_b !== twoFm1) { setFm1s(!!st.midi.usb_b); shownRoutes = ""; }
   if (r !== shownRoutes && Date.now() > routesDirtyUntil) { routes = JSON.parse(r); shownRoutes = r; renderMatrix(); renderEditor(); }
   if (p !== shownPresets && !String(document.activeElement && document.activeElement.id).startsWith("pn")) { shownPresets = p; renderPresets(); }
 }

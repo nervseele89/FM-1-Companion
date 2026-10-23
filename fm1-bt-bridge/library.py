@@ -231,8 +231,21 @@ def take_commands():
 
 # ---------------------------------------------------------------- the device
 
+def target_card():
+    """the sound card of the FM-1 the library works on: with two plugged in, the one chosen in Settings > Sloop
+    (FM-1 A or B); None with one (whichever it is)"""
+    cards = sloop.fm1_cards()
+    if len(cards) < 2:
+        return None
+    try:
+        which = json.loads(SETTINGS.read_text()).get("library_fm1", "A")
+    except (OSError, ValueError, AttributeError):
+        which = "A"
+    return cards[1] if which == "B" else cards[0]
+
+
 def connect():
-    dev = sloop.Sloop(sloop.Link())
+    dev = sloop.Sloop(sloop.Link(card=target_card()))
     try:
         FIRMWARE.write_text(json.dumps({"firmware": str(dev.version)}))
     except OSError:
@@ -423,6 +436,8 @@ def job_load_sample(slot, name, wavs):
 def job_flash(package):
     import fm1_install
     with Job("flash") as job:
+        if len(sloop.fm1_cards()) > 1:         # mid-update the FM-1 restarts as another device: the installer
+            raise sloop.SloopError("two", "Unplug the other FM-1 first")    # could pick up the wrong one
         job.step("Checking the package")       # (~30 s on a Zero W)
         product, image = fm1_install.load_package(package, False)   # a bad package stops here
         job.step("Connecting")

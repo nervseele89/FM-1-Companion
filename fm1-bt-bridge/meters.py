@@ -208,6 +208,14 @@ def chord_name(notes):
     return None
 
 
+def capture(target):
+    """("--target", node, "-P", properties) for pw-cat/pw-record; "monitor:NAME" records what plays on the
+    speaker NAME (two FM-1s, mixed)"""
+    if target.startswith("monitor:"):
+        return ["--target", target[8:], "-P", "{ node.dont-reconnect = true stream.capture.sink = true }"]
+    return ["--target", target, "-P", "{ node.dont-reconnect = true }"]
+
+
 class LevelReader:
     """The FM-1's input through pw-cat, while the meter screen is open."""
 
@@ -220,8 +228,8 @@ class LevelReader:
         self.pending, self.recent = bytearray(), b""
         try:
             self.proc = subprocess.Popen(
-                ["pw-cat", "--record", "--raw", "--target", target, "--rate", str(RATE), "--channels", "2",
-                 "--format", "s16", "--latency", "32ms", "-P", "{ node.dont-reconnect = true }", "-"],
+                ["pw-cat", "--record", "--raw", *capture(target), "--rate", str(RATE), "--channels", "2",
+                 "--format", "s16", "--latency", "32ms", "-"],
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         except OSError:
             self.proc = None
@@ -331,8 +339,8 @@ class Recorder:
         self.stop()
         try:
             self.proc = subprocess.Popen(
-                ["pw-record", "--target", target, "--rate", str(rate), "--channels", "2", "--format", "s16",
-                 "-P", "{ node.dont-reconnect = true }", str(path)],
+                ["pw-record", *capture(target), "--rate", str(rate), "--channels", "2", "--format", "s16",
+                 str(path)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
             self.proc = None
@@ -482,7 +490,7 @@ class MeterScreens:
             self.say("SD card full")
             return
         path = folder / f"{datetime.now():%Y-%m-%d_%H%M%S}_fm1.wav"
-        if not self.recorder.start(self.source["name"], path, self.state["audio_rate"]):
+        if not self.recorder.start(self.capture_target(), path, self.state["audio_rate"]):
             self.say("Can't record (pw-record?)")
 
     def recording_tick(self, now):
@@ -522,7 +530,7 @@ class MeterScreens:
             return (self.meter_index(), tuple(getattr(midi, "notes", ()) or ()),
                     getattr(midi, "chans", 0)), rec
         want = (self.screen == "meter" and self.mode != "saver" and self.source and numpy()
-                and self.source["name"])
+                and self.capture_target())
         if not want:
             if self.levels.proc:
                 self.levels.stop()

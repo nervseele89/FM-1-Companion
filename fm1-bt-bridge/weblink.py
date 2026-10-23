@@ -22,11 +22,16 @@ class WebLink:
         midi, clock = self.midi, getattr(self.midi, "clock", None) if self.midi else None
         keys = self.keys_route()
         return {
-            "fm1": self.source and (self.fw_label or self.source["label"]), "live": self.loop.running(),
+            "fm1": self.source and ((self.fw_label or self.source["label"]) + (" + B" if self.source_b else "")),
+            "live": self.live(),
+            "mixer": ({k: self.mix_level(k) for k in dict.fromkeys("usb" if c.startswith("usb") else c
+                                                               for c, _ in self.mix_channels())}
+                      if len(self.mix_channels()) > 1 else None),
             "speaker": self.sink and self.sink["label"], "speaker_name": self.state["last_name"],
             "connecting": self.connecting, "volume": self.volume, "battery": self.battery,
             "midi": {"peer": midi and midi.peer, "enabled": bool(midi and midi.enabled), "usb": midi and midi.usb_label(),
-                     "error": midi and midi.error, "controllers": list(getattr(midi, "controllers", None) or [])},
+                     "error": midi and midi.error, "controllers": list(getattr(midi, "controllers", None) or []),
+                     "usb_b": getattr(midi, "usb_b", None)},
             "clock": clock, "clock_text": self.clock_text(),
             "recording": int(self.recorder.seconds()) if self.recorder.recording() else None,
             "settings": dict({k: self.state[k] for k in SETTINGS}, arp_on=keys["arp_on"], chord_on=keys["chord_on"],
@@ -80,11 +85,15 @@ class WebLink:
                     self.state["audio_rate"] = value
                     self.save_settings()
                     self.loop.reopen(value)
+                    self.mixer.reopen(value)
                 return f"Web: Audio {value / 1000:g} kHz"
             if key in ("arp_on", "chord_on") and isinstance(value, bool):
                 if self.keys_route()[key] != value:
                     self.toggle_keys(key)
                 return None                   # toggle_keys says it
+            if key in ("mix_a", "mix_b", "mix_usb") and isinstance(value, int) and 0 <= value <= 200:
+                self.set_mix_level(key[4:], value)
+                return None
             if key == "volume" and isinstance(value, int) and 0 <= value <= 100 and self.sink:
                 self.volume_to(value)
                 return None

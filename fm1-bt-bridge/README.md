@@ -113,7 +113,8 @@ or down repeats, faster after a second and a half.
 | **Audio ›** | |
 | · **Speaker** | The paired speaker or headphones. Press to scan for and pair a different one (same as KEY1). |
 | · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
-| · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). |
+| · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). 48 kHz (the default) is lighter on the Pi: Bluetooth speakers run at it. |
+| · **FM-1 A / FM-1 B / USB keys level** | The mixer, with more than one sound source: press, then up/down in 5% steps, 0–200% (below). |
 | **MIDI ›** | |
 | · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
 | · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
@@ -251,6 +252,29 @@ from the next boot): at high speed, devices behind a USB 2 hub time out on the P
 keyboards are full-speed devices, so nothing is lost. The FM-1 is found by its name (or its USB ID), never
 taken for a keyboard or the other way round.
 
+### Two FM-1s and the mixer
+
+Plug a second FM-1 into the hub and both play. They're **FM-1 A** and **FM-1 B** by the hub port they're on
+(the lower-numbered port is A), so the names stay put across reboots and replugs, and the home screen shows
+"SLOOP 2.8 + B". While B is in, the MIDI matrix gets an *FM-1 B* row and a *B* column (short names on the
+screen: A, B, BT, USB). At first Bluetooth, the USB keyboards and the box's clock go to both FM-1s, so they
+play together; switch routes off to split them. What one FM-1 plays goes nowhere until you route it.
+
+![Two FM-1s in the matrix](../docs/images/screen-matrix-two.png)
+
+With more than one sound source (two FM-1s, or a USB keyboard with a synth of its own, such as an SMK-37
+running Baud Girl), Settings → **Audio** gets a level for each, 0–200% in 5% steps; 0% takes it out. The web
+app has the same as Mixer sliders. Over 100% boosts a quiet source: if loud passages distort with everything
+playing, bring it back a little. PipeWire adds the sources together at the speaker, before Bluetooth, and
+recordings and the meters hear the whole mix (with no speaker connected, FM-1 A alone).
+
+![The mixer](../docs/images/screen-settings-mixer.png)
+
+FM-1 A keeps the audio clock. Two USB devices never run at exactly the same speed, so the others are re-timed
+to it, with a little extra buffering (`config/wireplumber-51-fm1-bridge.conf`) so the correction stays
+smooth. With two FM-1s, Settings → Sloop › **FM-1** picks which one backups, restores and loads go to;
+firmware installs ask you to unplug the other one, since the FM-1 restarts as another device mid-update.
+
 ### MIDI matrix
 
 Settings → MIDI › **MIDI routes**:
@@ -258,7 +282,7 @@ Settings → MIDI › **MIDI routes**:
 ![MIDI routes](../docs/images/screen-matrix.png)
 
 Rows are sources (Bluetooth, USB keyboards, the FM-1, the box's clock), columns destinations (the FM-1,
-Bluetooth, USB keyboards). A filled square is a route that's on; "–" marks a crossing that would only echo
+Bluetooth, USB keyboards), and FM-1 B's while a second FM-1 is plugged in (above). A filled square is a route that's on; "–" marks a crossing that would only echo
 back. The joystick moves;
 left from the first column goes back. **Press opens a route:**
 
@@ -307,6 +331,7 @@ itself, whatever it runs). Recordings has its own row on Settings.
 
 | Sloop › | What it does |
 |---|---|
+| **FM-1** A/B | Only with two FM-1s plugged in: which one the jobs below go to. |
 | **Back up now** | Saves everything on the FM-1: the working project, projects A–D, settings, user presets, the FM6 bank, the SYN drum kits, the MIDI map, the theme and the four sample slots. |
 | **Restore ›** | Pick a backup; it replaces what's on the FM-1. |
 | **Load project ›** | Pick a project file, or a project inside any backup, then where it goes: the working project or A–D. |
