@@ -26,6 +26,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
 
+import battery
 import library
 from libui import LIBRARY_KEYS, LibraryScreens
 import meters
@@ -541,6 +542,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.devices, self.cursor, self.scanning = [], 0, False
         self.midi = None                      # blemidi.MidiBridge, when BlueZ and mido are there
         self.wifi, self.next_wifi = None, 0.0
+        self.battery, self.next_battery = None, 0.0   # the PiSugar's {"percent", "mv", "plugged"}, or None
+        self.battery_warned, self.battery_empty = False, 0
         self.setting = 0                      # cursor on the settings page
         self.settings_menu = None             # None: the top list of sections; else a section (GROUPS)
         self.flash_paused = False
@@ -584,6 +587,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                     and now >= next_reconnect and self.bt_lock.acquire(blocking=False)):
                 next_reconnect = now + RECONNECT_EVERY
                 threading.Thread(target=self.reconnect_quietly, daemon=True).start()
+            if now >= self.next_battery:
+                self.battery, self.next_battery = battery.read(), now + 10
+                self.battery_check()
             self.auto_backup()
             self.identify_fm1()
             self.web_publish()
@@ -863,6 +869,25 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             text = f"{clock['bpm']} BPM" if clock else f"{self.state['bpm']} BPM"
         return ("▶ " if clock and clock.get("playing") else "") + text
 
+    def battery_check(self):
+        """On battery: a warning at battery.LOW, and at battery.EMPTY (twice in a row, so one odd reading
+        doesn't) a safe shutdown before the PiSugar cuts the power and the SD card is caught mid-write."""
+        b = self.battery
+        if not b or b["plugged"]:
+            self.battery_warned, self.battery_empty = False, 0
+            return
+        if b["percent"] <= battery.EMPTY:
+            self.battery_empty += 1
+            if self.battery_empty == 2:
+                self.post("battery", "empty")
+            return
+        self.battery_empty = 0
+        if b["percent"] <= battery.LOW and not self.battery_warned:
+            self.battery_warned = True
+            self.post("battery", "low")
+        elif b["percent"] > battery.LOW + 5:
+            self.battery_warned = False
+
     def shutdown(self):
         self.busy = "Shutting down"
         self.render(force=True)
@@ -962,6 +987,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                 self.message if now < self.message_until else None, self.loop.running(),
                 self.source and self.source["label"], self.fw_label, self.sink and self.sink["label"], self.connecting,
                 self.state["last_name"], self.auto, self.volume, now < self.volume_shown,
+                self.battery and (self.battery["percent"], self.battery["plugged"]),
                 self.midi_text(), bool(self.midi and now - self.midi.activity() < 0.4), self.clock_text(),
                 tuple(d["name"] for d in self.devices), self.cursor, self.scanning,
                 tuple(self.settings_rows()) if self.screen == "settings" else None, self.setting, self.settings_menu,
@@ -1007,6 +1033,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if live:
             d.rectangle((124 - w, 0, 127, 11), fill=1)
         d.text((126 - w, 1), tag, font=self.f_small, fill=0 if live else 1)
+        if self.battery:
+            self.draw_battery(d, 122 - w)
         d.line((0, 14, 127, 14), fill=1)
         if self.sink:
             out = short_label(self.sink["label"])
@@ -1034,6 +1062,25 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         else:
             hint = self.clock_text() or "settings >"
         d.text((128 - d.textlength(hint, font=self.f_small), 53), hint, font=self.f_small, fill=1)
+
+    def draw_battery(self, d, right):
+        """the PiSugar's charge between the title and the LIVE tag: a battery (a bolt in it while plugged in)
+        and its percent (the number alone: there's room for 32 pixels); left out where there isn't room (the
+        REC timer is wider)"""
+        b = self.battery
+        text = str(b["percent"])
+        left = right - d.textlength(text, font=self.f_small) - 12
+        if left < 70:                          # "FM-1 > BT" ends at 68
+            return
+        x, y = int(left), 3
+        d.rectangle((x, y, x + 9, y + 6), outline=1)
+        d.rectangle((x + 10, y + 2, x + 10, y + 4), fill=1)                      # the nub
+        if b["plugged"]:
+            d.polygon([(x + 5, y + 1), (x + 2, y + 4), (x + 5, y + 4), (x + 4, y + 6), (x + 8, y + 2),
+                       (x + 5, y + 2)], fill=1)
+        elif b["percent"]:
+            d.rectangle((x + 2, y + 2, x + 2 + round(5 * b["percent"] / 100), y + 4), fill=1)
+        d.text((x + 12, 1), text, font=self.f_small, fill=1)
 
     def draw_saver(self, d, now):
         """After OFF_AFTER idle: "FM-1 LIVE" (or idle) in small type, moving every 20 s."""
@@ -1143,6 +1190,14 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                 self.wake()
             elif event and event[0] == "request":
                 self.web_request(event[1])
+            elif event and event[0] == "battery":
+                self.last_activity = time.monotonic()
+                self.wake()
+                if event[1] == "empty":
+                    self.say("Battery empty: shutting down", 5)
+                    self.shutdown()
+                else:
+                    self.say(f"Battery low: {self.battery['percent']}%", 4)
             self.screensaver()
             self.render()
 

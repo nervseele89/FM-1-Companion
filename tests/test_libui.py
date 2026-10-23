@@ -108,6 +108,32 @@ def test_quality_of_life():
         timer.tick(k * 0.05)
     assert len(posted) >= 20, len(posted)                  # 15 at an even 5 a second
 
+
+
+def test_battery():
+    """The PiSugar's charge on the home screen; a warning when low, a safe shutdown when empty."""
+    import queue
+    app = make_app()
+    app.screen, app.message = "status", None
+    app.battery = {"percent": 78, "mv": 3818, "plugged": True}
+    snap(app, "status-battery")
+    app.battery_check()
+    assert app.events.empty()                              # plugged in: nothing to say
+    for percent, expect in ((40, None), (15, "low"), (14, None), (12, None), (5, None), (4, "empty")):
+        app.battery = {"percent": percent, "mv": 3500, "plugged": False}
+        app.battery_check()
+        try:
+            got = app.events.get_nowait()
+        except queue.Empty:
+            got = None
+        assert got == (("battery", expect) if expect else None), (percent, got)   # once each, empty twice
+    app.battery = {"percent": 4, "mv": 3300, "plugged": True}                      # plugged back in
+    app.battery_check()
+    assert not app.battery_warned and app.battery_empty == 0
+    app.recorder.recording = lambda: True                  # the REC timer needs the room: no battery then
+    app.recorder.seconds = lambda now=None: 754
+    snap(app, "status-battery-rec")
+
 def test_volume_steps():
     """Up and down land on even steps (2 %), whatever the speaker had; a Bluetooth speaker's 1/127ths
     round back to the same whole percent."""

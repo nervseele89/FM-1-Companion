@@ -25,6 +25,9 @@ FM-1 ──USB──▶ Pi Zero W ─┤
 - microSD card (8 GB or more)
 - A **micro-USB OTG adapter** and a cable to the FM-1, plugged into the Zero's port labelled **USB**
 - A good **5 V 2.5 A** supply into the port labelled **PWR**. The Zero powers the FM-1 too.
+- Optional: a **PiSugar 3** (1200 mAh) under the Zero, to run on battery. Power the box from the PiSugar's
+  USB-C then. The box shows the charge, warns at 15% and shuts down safely at 5%; `install.sh` switches on
+  the I2C it's read over. The FM-1 draws from the battery too, so charge it first.
 
 ## Set up
 

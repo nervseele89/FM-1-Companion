@@ -97,7 +97,10 @@ class Loop:
 def scenes(app):
     """(file name, how to set the app up) for each screen worth showing."""
     def status():
-        pass
+        app.battery = {"percent": 78, "mv": 3818, "plugged": False}
+
+    def charging():
+        app.battery = {"percent": 64, "mv": 3790, "plugged": True}
 
     def recording():
         app.recorder = Recording()
@@ -163,7 +166,7 @@ def scenes(app):
     def saver():
         app.mode = "saver"
 
-    return [("status", status), ("status-rec", recording), ("settings", settings),
+    return [("status", status), ("status-charging", charging), ("status-rec", recording), ("settings", settings),
             ("settings-play", settings_play), ("settings-sloop", settings_sloop), ("settings-fm1", settings_fm1), ("status-volume", volume),
             ("matrix", matrix), ("route", route), ("speakers", speakers),
             ("pairing", pairing), ("screensaver", saver), ("recordings", recordings),

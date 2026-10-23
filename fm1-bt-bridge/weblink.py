@@ -24,7 +24,7 @@ class WebLink:
         return {
             "fm1": self.source and (self.fw_label or self.source["label"]), "live": self.loop.running(),
             "speaker": self.sink and self.sink["label"], "speaker_name": self.state["last_name"],
-            "connecting": self.connecting, "volume": self.volume,
+            "connecting": self.connecting, "volume": self.volume, "battery": self.battery,
             "midi": {"peer": midi and midi.peer, "enabled": bool(midi and midi.enabled), "usb": midi and midi.usb_label(),
                      "error": midi and midi.error},
             "clock": clock, "clock_text": self.clock_text(),

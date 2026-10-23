@@ -397,6 +397,7 @@ table.mx td button.sel{outline:3px solid var(--accent);outline-offset:1px}
 <div id="offline" class="banner" hidden>The box isn't answering: it may be starting, or its bridge stopped. Settings will work again when it's back.</div>
 <div class="grid">
 <section><h2>Audio</h2>
+  <div class="line" id="s-batline" hidden><span class="k">Battery</span><span class="v" id="s-bat">–</span></div>
   <div class="line"><span class="k">FM-1</span><span class="v" id="s-fm1">–</span></div>
   <div class="line"><span class="k">Speaker</span><span class="v" id="s-spk">–</span></div>
   <div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">Volume</span><b id="s-volv">–</b></div>
@@ -547,6 +548,9 @@ function renderStatus() {
   if (off) return;
   const s = st.settings;
   $("s-fm1").textContent = st.fm1 || "not found";
+  const bat = !st.offline && st.battery;
+  $("s-batline").hidden = !bat;
+  if (bat) $("s-bat").textContent = `${bat.percent}%` + (bat.plugged ? " · charging" : "");
   $("s-spk").textContent = st.speaker || (st.connecting ? "connecting…" : (st.speaker_name ? st.speaker_name + " (off)" : "none"));
   if (Date.now() > editingUntil) { if (st.volume != null) $("s-vol").value = st.volume; $("s-tempo").value = s.bpm; }
   $("s-volv").textContent = st.volume != null ? st.volume + "%" : "–"; $("s-vol").disabled = st.volume == null;

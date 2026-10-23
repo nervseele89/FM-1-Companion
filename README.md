@@ -1,12 +1,12 @@
 # FM-1 Sloop Companion Device
 
-[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-bridge-demo.mp4)
+[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.mp4)
 
-**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-bridge-demo.mp4)**
-(1:46, with sound): the box's own screens, all eleven meters, settings, the MIDI matrix and the library,
-with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
+**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.mp4)**
+(1:46, with sound): the box's own screens, all eleven meters, the settings, the MIDI matrix and the sample
+editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
 
-![The box: a Pi Zero W with the Waveshare OLED HAT, its FM-1 on SLOOP 2.8, playing on a JBL Go 3 with an SMK-37 keyboard](docs/images/device.jpg)
+<img src="docs/images/device-with-fm1.jpg" width="560" alt="The box on its PiSugar battery, cabled to the FM-1 running SLOOP">
 
 A pocket-sized companion box for the **M-VAVE FM-1** pocket synth running custom firmware such as
 [Sloop](https://github.com/isod89/sloop-fm1). It started as a way to add the Bluetooth those firmwares leave switched off, and grew into a small studio
@@ -52,22 +52,30 @@ the real FM-1 with a backup, a restore (read back byte for byte), a project load
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
-## What's new in v2.5
+## What's new in v2.6
 
-![The sample editor](docs/images/screen-editor.png)
+| On battery | Plugged in |
+|---|---|
+| ![The box on battery: the gauge in the title bar reads 70](docs/images/device-battery.jpg) | ![Charging: a bolt in the battery](docs/images/screen-status-charging.png) |
 
 **New**
-- **A sample editor**, on the box (Settings → **Sample editor ›**) and in the web app (a new **Editor** tab).
-  Start from a recording or from a sample already in the samples folder, then set the **start and end**
-  on the waveform, **fade in and out**, **normalize** to the Sample level, **reverse**, and pick the
-  **root note** (found for you by listening to it). Play the selection to hear it exactly as it will be
-  saved. On the phone you can drag the markers, zoom in and name the file.
-- **Saved as a new sample, never over the original:** the edit goes into the samples folder with its note
-  in the name (`my-bass_A2.wav`), so SLOOP plays it in tune. From there **Sloop › Load sample** puts it in
-  a slot like any other sample.
-- **Recordings stay recordings:** a take now offers *Play*, *Edit as sample* and *Delete*. The old one-step
-  "load the first 7 seconds into a slot" is gone, so nothing reaches the FM-1 that you haven't trimmed and
-  heard first.
+- **Runs on a battery:** fit a [PiSugar 3](https://docs.pisugar.com/docs/product-wiki/battery/pisugar3/pisugar-3-series)
+  (1200 mAh) under the Pi Zero and the box shows its charge in the title bar, a battery with the percent next
+  to LIVE, and a charging bolt while it's plugged in. The web app shows it too.
+- **Looks after itself on battery:** a warning at 15%, and at 5% a safe shutdown (recordings are finished
+  first) before the battery cuts out and catches the SD card mid-write.
+- **A new demo video** at the top of this page, with the sectioned settings and the sample editor.
+
+**Good to know:** the FM-1 draws its power from the box over USB, so on battery the PiSugar feeds the
+synth as well, which shortens the run time a lot (see Known limits). Charge the FM-1 first; a way to cut
+the FM-1's power on battery is being worked out.
+
+<details><summary>Earlier: v2.5</summary>
+
+A sample editor on the box and in the web app: start from a recording or a sample, set the start and end,
+fades, normalize, reverse and the root note (found by listening), play it, and save it as a new sample with
+its note in the name, ready for Sloop › Load sample. Recordings no longer go straight into a slot.
+</details>
 
 <details><summary>Earlier: v2.4</summary>
 
@@ -98,7 +106,7 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 | | |
 |---|---|
 | ![Status screen](docs/images/screen-status.png) | ![Recording](docs/images/screen-status-rec.png) |
-| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume and the clock. LIVE means audio is flowing. | **Recording:** REC and the time in place of LIVE. |
+| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume and the clock. LIVE means audio is flowing; the battery's charge is next to it. | **Recording:** REC and the time in place of LIVE. |
 | ![Settings](docs/images/screen-settings.png) | ![Playing](docs/images/screen-settings-play.png) |
 | **Settings** (joystick right): Playing, Audio, MIDI, Recordings, Sample editor, Wi-Fi, Sloop and FM-1. Press opens a section, left goes back. | **Playing ›:** Metronome, Tempo, Clock, Arp, Chord and the click level. **Audio ›** has the speaker and the audio rate; **MIDI ›** Bluetooth MIDI, pairing, the routes and their presets. |
 | ![Sloop](docs/images/screen-settings-sloop.png) | ![FM-1](docs/images/screen-settings-fm1.png) |
@@ -160,6 +168,7 @@ sudo reboot
 | `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
 | `fm1-bt-bridge/midiui.py` | The MIDI matrix screens on the box |
 | `fm1-bt-bridge/sampleui.py` | The sample editor's screen on the box |
+| `fm1-bt-bridge/battery.py` | The PiSugar 3 battery's charge, read over I2C |
 | `fm1-bt-bridge/sampler.py` | The sample editor's sums (trim, fades, normalize, reverse, the note), shared by the box and the web page |
 | `fm1-bt-bridge/metronome.py` | The metronome's click stream (run by the MIDI process) |
 | `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
@@ -179,6 +188,9 @@ sudo reboot
 
 - **Bluetooth audio delay:** about 150–250 ms (SBC). Fine for listening and practising; you'll
   notice it when playing tightly in time.
+- **On battery, the FM-1 runs (and charges) from it too.** The Pi Zero's USB port gives the FM-1 power
+  that software can't switch off, so a PiSugar 3 lasts far less with the FM-1 plugged in. Charge the FM-1
+  first; cutting its power on battery needs a small hardware switch, still being tested.
 - **Plugging the FM-1 in while the Pi is running can reboot the Pi.** The Zero's USB port has no
   current limit. Connect the FM-1 first, or use a powered USB hub.
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send

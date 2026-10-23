@@ -18,13 +18,14 @@ sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
     pipewire wireplumber libspa-0.2-bluetooth dbus-user-session rtkit bluez \
     python3-pil python3-spidev python3-libgpiod fonts-dejavu-core \
-    python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy
+    python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy python3-smbus2 i2c-tools
 
 echo "== Enabling SPI for the OLED HAT, Bluetooth, and permissions"
 sudo raspi-config nonint do_spi 0
+sudo raspi-config nonint do_i2c 0       # a PiSugar 3 battery, if there's one, answers on I2C
 sudo rfkill unblock bluetooth || true
 sudo systemctl enable --now bluetooth
-sudo usermod -aG bluetooth,gpio,spi,audio "$USER"
+sudo usermod -aG bluetooth,gpio,spi,i2c,audio "$USER"
 
 echo "== Letting the bridge shut down, switch Wi-Fi and copy backups to the SD card without a password"
 sudo install -m 755 "$DIR/config/fm1-sd-sync" /usr/local/sbin/fm1-sd-sync
@@ -49,6 +50,7 @@ install -D -m 644 "$DIR/libui.py"                               ~/.local/share/f
 install -D -m 644 "$DIR/meters.py"                              ~/.local/share/fm1-bridge/meters.py
 install -D -m 644 "$DIR/midiui.py"                              ~/.local/share/fm1-bridge/midiui.py
 install -D -m 644 "$DIR/metronome.py"                           ~/.local/share/fm1-bridge/metronome.py
+install -D -m 644 "$DIR/battery.py"                             ~/.local/share/fm1-bridge/battery.py
 install -D -m 644 "$DIR/weblink.py"                             ~/.local/share/fm1-bridge/weblink.py
 install -D -m 644 "$DIR/samplefast.py"                          ~/.local/share/fm1-bridge/samplefast.py
 install -D -m 644 "$DIR/sampler.py"                             ~/.local/share/fm1-bridge/sampler.py
