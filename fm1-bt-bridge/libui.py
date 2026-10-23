@@ -257,9 +257,18 @@ class LibraryScreens:
                        "No recordings yet" if folder == "recordings" else "No samples yet", back="pick")
 
     def pick_recording(self, name):
-        """what to do with a recording: play it on the speaker, make a sample of it, or delete it"""
-        actions = [("Play", "", "play"), ("Edit as sample ›", "", "edit"), ("Delete", "", "delete")]
+        """what to do with a recording: play it on the speaker, make a sample of it, open one of its parts (each
+        source on its own, with Record parts on), or delete it"""
+        parts = library.recording_parts(name)
+        actions = ([("Play", "", "play"), ("Edit as sample ›", "", "edit")]
+                   + ([("Parts ›", str(len(parts)), "parts")] if parts else []) + [("Delete", "", "delete")])
         self.open_pick(short_date(name), actions, lambda action: self.recording_action(name, action), "")
+
+    def pick_part(self, name):
+        """a part: play it or make a sample of it (it goes with its take when that's deleted)"""
+        label = library.part_label(library.PART.match(name).group(2))
+        self.open_pick(label, [("Play", "", "play"), ("Edit as sample ›", "", "edit")],
+                       lambda action: self.recording_action(name, action), "", back="pick")
 
     def recording_action(self, name, action):
         path = library.folder("recordings") / name
@@ -272,14 +281,20 @@ class LibraryScreens:
                 self.say("Can't play (pw-play?)")
         elif action == "edit":
             self.open_editor(name)
+        elif action == "parts":
+            items = [(library.part_label(library.PART.match(n).group(2)), clock(wav_seconds(library.folder(
+                "recordings") / n)), n) for n in library.recording_parts(name)]
+            self.open_pick("Parts", items, self.pick_part, "", back="pick")
         elif action == "delete":
+            parts = library.recording_parts(name)
+
             def delete():
-                path.unlink(missing_ok=True)
-                clips_file(path).unlink(missing_ok=True)
+                library.delete_recording(name)
                 self.screen = "settings"
                 self.say("Deleted")
             seconds = wav_seconds(path) if path.exists() else 0
-            self.ask("Delete?", [short_date(name), f"{clock(seconds)} recorded"], delete)
+            self.ask("Delete?", [short_date(name), f"{clock(seconds)} recorded"]
+                     + ([f"and its {len(parts)} parts"] if parts else []), delete)
 
     def pick_firmware(self, choice):
         if isinstance(choice, tuple):         # ("fetch", "sloop" / "clipper")

@@ -80,6 +80,19 @@ music playing: about a quarter of the CPU while shown, and no audio dropouts.
   every few seconds. Each of those cost the Pi Zero 1–2 seconds of CPU, which made playing lag and the
   controls slow with three sound sources. Audio now takes about half the CPU it did.
 
+**New in v2.8.1: Record parts**
+- **Each source on its own, plus the mix:** turn on Settings › Audio › **Record parts** and every take also
+  keeps FM-1 A, FM-1 B and a USB keyboard's synth as files of their own (`…_fm1-a.wav`, `…_fm1-b.wav`,
+  `…_fm1-usb0.wav`), at full level, next to the mix. Ready for samples, or for mixing again on a computer.
+- **One recorder for everything:** all the sources go into one many-channel recording, and the box splits
+  it into the parts and adds up the mix at your mixer levels after Stop. So the parts and the mix line up to
+  the sample, the mix no longer needs the speaker connected, and the Pi stays smooth while recording (a
+  recorder for each source maxed its CPU out).
+- **In Recordings, a take shows once:** **Parts ›** plays a part or opens it in the sample editor, and
+  Delete removes the take with its parts. The web app lists the parts under each take, with a player,
+  Download and Edit. Clipping is checked on each part, so a warning names the source that clipped.
+- Off at first: a take with parts uses about four times the SD card space.
+
 **Fixed**
 - Turning BLE MIDI off no longer silences USB keyboards (it was meant for Bluetooth only).
 - With no FM-1 plugged in, a USB keyboard's own sound is never taken for the FM-1's.
@@ -245,7 +258,8 @@ sudo reboot
   port has no current limit. Connect the FM-1 first, or put a USB hub in between: unplugging the FM-1 from
   the hub and plugging it back in doesn't reboot the box (plugging the hub itself into the box may still).
 - **With two FM-1s (or a keyboard's synth), recordings need the speaker connected** to hear the whole mix;
-  without one they record FM-1 A. Firmware installs wait until only one FM-1 is plugged in.
+  without one they record FM-1 A. With Record parts on (v2.8.1) the mix is made from the parts and needs no
+  speaker. Firmware installs wait until only one FM-1 is plugged in.
 - **USB runs at 12 Mbit/s** so a hub works on the Pi Zero. Fine for MIDI and the FM-1's audio, but a
   USB 2 device that needs high speed (a fast USB stick, say) is slower behind it.
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send

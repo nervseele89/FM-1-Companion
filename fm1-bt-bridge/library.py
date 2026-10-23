@@ -513,29 +513,70 @@ def job_fetch(name):
         job.done(f"Downloaded {asset['name']}", file=target.name, tag=release.get("tag_name"))
 
 
+PART = re.compile(r"^(.+_fm1)-(a|b|usb\d+)\.wav$")    # a take's part: "2026-10-23_180000_fm1-b.wav"
+
+
+def part_label(key):
+    """"a" -> "FM-1 A", "usb0" -> "USB keys", "usb1" -> "USB keys 2" """
+    if key.startswith("usb"):
+        n = int(key[3:] or 0)
+        return "USB keys" + (f" {n + 1}" if n else "")
+    return f"FM-1 {key.upper()}"
+
+
+def recording_parts(name):
+    """a take's parts (recorded with Record parts on, next to it), as file names in recording order"""
+    stem = Path(name).stem
+    found = [p.name for p in folder("recordings").glob(f"{stem}-*.wav") if PART.match(p.name)]
+    order = {"a": 0, "b": 1}
+    return sorted(found, key=lambda n: (order.get(PART.match(n).group(2), 2), n))
+
+
+def delete_recording(name):
+    """a take, its parts and their clip counts"""
+    for n in [name] + recording_parts(name):
+        path = folder("recordings") / n
+        path.unlink(missing_ok=True)
+        Path(str(path) + ".clips").unlink(missing_ok=True)
+
+
+def recording_entry(path):
+    """{name, bytes, date, seconds, clips?} for a take or a part"""
+    entry = {"name": path.name, "bytes": path.stat().st_size, "date": path.stat().st_mtime}
+    with open(path, "rb") as f:               # 16-bit stereo, 44.1 or 48 kHz: the byte rate is in the header
+        head = f.read(44)
+    rate = int.from_bytes(head[28:32], "little") if head[:4] == b"RIFF" else 0
+    entry["seconds"] = max(0, entry["bytes"] - 44) // (rate or 192000)
+    try:                                      # flat tops counted when it was saved (meters.clip_count)
+        entry["clips"] = int(Path(str(path) + ".clips").read_text())
+    except (OSError, ValueError):
+        pass
+    return entry
+
+
 def listing():
-    """{folder: [{name, bytes, date, ...}]} newest first, backups with what's in them"""
+    """{folder: [{name, bytes, date, ...}]} newest first, backups with what's in them, recordings with their
+    parts (each {name, part, label, seconds, ...}) instead of beside them"""
     out = {}
     for name in FOLDERS:
         entries = []
         for path in sorted(folder(name).iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
             if not path.is_file() or path.suffix.lower() not in SUFFIXES[name]:
                 continue
+            if name == "recordings" and PART.match(path.name):
+                continue                      # under its take, below
             entry = {"name": path.name, "bytes": path.stat().st_size, "date": path.stat().st_mtime}
             if name == "backups":
                 try:
                     entry.update(sloop.describe(sloop.load_json(path)))
                 except sloop.SloopError:
                     entry["damaged"] = True
-            elif name == "recordings":        # 16-bit stereo, 44.1 or 48 kHz: the byte rate is in the header
-                with open(path, "rb") as f:
-                    head = f.read(44)
-                rate = int.from_bytes(head[28:32], "little") if head[:4] == b"RIFF" else 0
-                entry["seconds"] = max(0, entry["bytes"] - 44) // (rate or 192000)
-                try:                          # flat tops counted when it was saved (meters.clip_count)
-                    entry["clips"] = int(Path(str(path) + ".clips").read_text())
-                except (OSError, ValueError):
-                    pass
+            elif name == "recordings":
+                entry = recording_entry(path)
+                parts = [dict(recording_entry(folder(name) / n), part=PART.match(n).group(2),
+                              label=part_label(PART.match(n).group(2))) for n in recording_parts(path.name)]
+                if parts:
+                    entry["parts"] = parts
             elif name == "projects":
                 try:
                     project = sloop.load_json(path)

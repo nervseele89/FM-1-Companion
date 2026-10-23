@@ -230,8 +230,10 @@ class Handler(BaseHTTPRequestHandler):
             path = safe_path(request.get("folder"), request.get("name"))
             if not path or not path.is_file():
                 return self.fail("no such file", 404)
-            path.unlink()
-            Path(str(path) + ".clips").unlink(missing_ok=True)      # a recording's clip count goes with it
+            if request.get("folder") == "recordings":
+                library.delete_recording(path.name)                   # with its parts and clip counts
+            else:
+                path.unlink()
             return self.send(200, {"ok": True, "message": f"deleted {path.name}"})
         self.fail("not found", 404)
 
@@ -713,10 +715,15 @@ function renderLibrary() {
     <a href="/files/recordings/${encodeURIComponent(r.name)}" download><button>Download</button></a></div>
     <audio controls preload="none" src="/files/recordings/${encodeURIComponent(r.name)}?inline=1"></audio>
     <div class="row" style="margin-top:6px"><button onclick="sedOpen('recordings', ${q(r.name)})">Edit as sample…</button>
-    <button class="danger" onclick="del('recordings',${q(r.name)})">Delete</button></div></div>`).join("")
+    <button class="danger" onclick="del('recordings',${q(r.name)})">Delete</button></div>
+    ${(r.parts || []).length ? `<details style="margin-top:8px"><summary class="meta">Parts: each source on its own (${r.parts.length})</summary>${r.parts.map((p) => `
+      <div class="row" style="justify-content:space-between;margin-top:6px"><span class="name">${esc(p.label)}${p.clips >= 5 ? ` <span class="warn">clipped ${p.clips}×</span>` : ""}</span>
+      <div class="row"><button onclick="sedOpen('recordings', ${q(p.name)})">Edit…</button><a href="/files/recordings/${encodeURIComponent(p.name)}" download><button>Download</button></a></div></div>
+      <audio controls preload="none" src="/files/recordings/${encodeURIComponent(p.name)}?inline=1"></audio>`).join("")}</details>` : ""}</div>`).join("")
     : `<p class="empty">No recordings yet: press Record above, or on the box press on any meter screen.</p>`;
   const pick = $("sed-pick"), was = pick.value;
-  pick.innerHTML = (lib.recordings.length ? `<optgroup label="Recordings">${lib.recordings.map((r) => `<option value="recordings/${esc(r.name)}">${when(r.date)} · ${mins(r.seconds)}</option>`).join("")}</optgroup>` : "")
+  pick.innerHTML = (lib.recordings.length ? `<optgroup label="Recordings">${lib.recordings.map((r) => `<option value="recordings/${esc(r.name)}">${when(r.date)} · ${mins(r.seconds)}</option>`
+      + (r.parts || []).map((p) => `<option value="recordings/${esc(p.name)}">  ${when(r.date)} · ${esc(p.label)}</option>`).join("")).join("")}</optgroup>` : "")
     + (lib.samples.length ? `<optgroup label="Samples">${lib.samples.map((x) => `<option value="samples/${esc(x.name)}">${esc(x.name)}</option>`).join("")}</optgroup>` : "")
     || `<option value="">No recordings or samples yet</option>`;
   if ([...pick.options].some((o) => o.value === was)) pick.value = was;

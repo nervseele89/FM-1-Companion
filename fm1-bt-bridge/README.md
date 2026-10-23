@@ -115,6 +115,7 @@ or down repeats, faster after a second and a half.
 | · **BT audio** on/off | Connects or disconnects the speaker (same as KEY2 and holding KEY2). |
 | · **Audio rate** 48 / 44.1 kHz | The rate the FM-1's audio runs at. Pressing it also restarts the FM-1's audio stream: if the speaker is connected but silent, press it (twice to keep the rate). 48 kHz (the default) is lighter on the Pi: Bluetooth speakers run at it. |
 | · **FM-1 A / FM-1 B / USB keys level** | The mixer, with more than one sound source: press, then up/down in 5% steps, 0–200% (below). |
+| · **Record parts** on/off | With more than one sound source: takes also keep each source as a file of its own (see Recording). Off at first. |
 | **MIDI ›** | |
 | · **BLE MIDI** on/off | Shows or hides "FM-1 Companion" to MIDI apps. It's remembered. |
 | · **Pairing** | Opens a 2-minute window in which a device can pair with the Companion. Only needed on systems that want to pair first (below). |
@@ -173,12 +174,21 @@ On any meter screen, press the joystick to start recording the FM-1, and again t
   audio to **master** with the knob around half, or keep full and lower its track levels in SLOOP.
 - **The Tape meter** turns its reels while sound plays; while recording, the tape winds from the left reel
   to the right one, a full reel every 30 minutes.
+- **Record parts** (Settings → Audio, with two FM-1s or a keyboard's synth plugged in): each take also
+  keeps every source as a file of its own, at full level: `…_fm1-a.wav`, `…_fm1-b.wav`, `…_fm1-usb0.wav`
+  next to the mix `…_fm1.wav`. They're recorded as one many-channel take (one recorder costs the Pi far less
+  than one a source) and split after Stop, when the mix is also added up at the mixer's levels; a long take
+  needs a few seconds before its files show. The parts and the mix line up to the sample, and the mix
+  doesn't need the speaker. The first second or so, while the recorder links up, is left out. A take with
+  parts uses about four times the space.
 - **On the box:** Settings → **Recordings ›** lists the takes. Pick one, then:
   - **Play:** on the speaker, over the FM-1's live sound, with the time and a progress bar. Press stops it.
   - **Edit as sample ›:** opens it in the sample editor (below).
-  - **Delete** (hold to confirm).
+  - **Parts ›** (a take with parts): play a part, or open it in the sample editor.
+  - **Delete** (hold to confirm): with its parts.
 - **To get the files:** with Wi-Fi on, the web page's *Recordings* tab has Download, Edit as sample and
-  Delete; over SSH they're in `~/fm1-library/recordings/`.
+  Delete, and under a take with parts, each part with a player, Download and Edit; over SSH they're in
+  `~/fm1-library/recordings/`.
 
 ### Sample editor
 

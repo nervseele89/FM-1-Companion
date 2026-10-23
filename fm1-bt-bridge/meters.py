@@ -348,6 +348,23 @@ class Recorder:
         self.path, self.started = path, time.monotonic()
         return True
 
+    def start_parts(self, path, channels, rate=48000):
+        """one pw-record of channels channels, linked to nothing (link_parts does that): every source on its
+        own pair, on one clock, for Record parts"""
+        self.stop()
+        try:
+            self.proc = subprocess.Popen(
+                ["pw-record", "--target", "0", "-P", f"{{ node.name = {PARTS_NODE} node.autoconnect = false "
+                                                     "node.dont-reconnect = true }",
+                 "--rate", str(rate), "--channels", str(channels),
+                 "--channel-map", ",".join(PARTS_MAP[:channels]), "--format", "s16", str(path)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            self.proc = None
+            return False
+        self.path, self.started = path, time.monotonic()
+        return True
+
     def recording(self):
         return self.proc is not None and self.proc.poll() is None
 
@@ -367,6 +384,59 @@ class Recorder:
                 self.proc.kill()
         self.proc = None
         return path, seconds
+
+
+PARTS_NODE = "fm1-rec-parts"
+PARTS_MAP = ("FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR")     # positions the WAV writer knows (7.1)
+
+
+def link_parts(sources):
+    """[source node names] -> their FL/FR into the parts recorder's channels, in pairs, by one pw-cli (each new
+    connection to PipeWire costs a Zero W 1-2 s of CPU: pw-link would be one per link)"""
+    lines = [f"create-link {node} capture_{side} {PARTS_NODE} input_{PARTS_MAP[2 * i + j]} {{ object.linger = true }}"
+             for i, node in enumerate(sources) for j, side in enumerate(("FL", "FR"))]
+    try:
+        subprocess.run(["pw-cli"], input="\n".join(lines + ["quit"]) + "\n", text=True, timeout=20,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
+def split_parts(raw, path, keys, levels):
+    """The parts recorder's take -> one stereo WAV a source (path with -<key>) and the mix at path (each at
+    its mixer level, added up). The frames before the links were made (all exact zeros) are left out.
+    -> [(key, part path)]. A second at a time: a long take is bigger than the Zero W's memory."""
+    load_numpy()
+    np = _np
+    parts = [(key, path.with_name(f"{path.stem}-{key}.wav")) for key in keys]
+    gains = np.array([levels.get(key, 100) / 100 for key in keys], dtype=np.float32)
+    with wave.open(str(raw), "rb") as src:
+        channels, rate = src.getnchannels(), src.getframerate()
+        outs = [wave.open(str(p), "wb") for _, p in parts] + [wave.open(str(path), "wb")]
+        for out in outs:
+            out.setnchannels(2)
+            out.setsampwidth(2)
+            out.setframerate(rate)
+        started = False
+        while True:
+            data = src.readframes(rate)
+            if not data:
+                break
+            x = np.frombuffer(data, dtype="<i2").reshape(-1, channels)
+            if not started:
+                moving = np.flatnonzero(np.any(x != 0, axis=1))
+                if not len(moving):
+                    continue
+                x, started = x[moving[0]:], True
+            pairs = x[:, :2 * len(keys)].reshape(len(x), len(keys), 2)
+            for i, out in enumerate(outs[:-1]):
+                out.writeframes(np.ascontiguousarray(pairs[:, i]).tobytes())
+            mix = np.tensordot(gains, pairs.astype(np.float32), axes=(0, 1))
+            outs[-1].writeframes(np.clip(mix, -32768, 32767).astype("<i2").tobytes())
+        for out in outs:
+            out.close()
+    raw.unlink(missing_ok=True)
+    return parts
 
 
 class Player:
@@ -418,6 +488,7 @@ class MeterScreens:
         self.meter_bg = {}                    # style -> background image (header and scale), drawn once
         self.meter_restart = 0.0
         self.recorder = Recorder()
+        self.parts_job = None                 # Record parts: {path, keys, levels} of the take being recorded
         self.rec_space_check = 0.0
         self.tape_done = 0.0                  # Tape: how far through the reel the last recording got (0..1)
         self.meter_reset()
@@ -461,21 +532,44 @@ class MeterScreens:
     # ---- recording
 
     def finish_recording(self, text):
-        """stop, say text (with the length for {}), then check the take for clipping in the background"""
-        path, seconds = self.recorder.stop()
-        self.say(text.format(clock(seconds)))
-        if path:
-            threading.Thread(target=self.check_clipping, args=(path,), daemon=True).start()
+        """stop, say text (with the length for {}), then check the take (and its parts) for clipping in the
+        background"""
+        raw, seconds = self.recorder.stop()
+        job, self.parts_job = self.parts_job, None
+        self.say(text.format(clock(seconds)) + (f" + {len(job['keys'])} parts" if job else ""))
+        if job and raw:                       # split the one take into the parts and the mix, then check them
+            def finish():
+                try:
+                    parts = split_parts(raw, job["path"], job["keys"], job["levels"])
+                except (OSError, EOFError, wave.Error, ValueError):
+                    self.say("Couldn't split the parts", 4)
+                    return
+                self.check_clipping(job["path"], parts)
+            threading.Thread(target=finish, daemon=True).start()
+        elif raw:
+            threading.Thread(target=self.check_clipping, args=(raw,), daemon=True).start()
 
-    def check_clipping(self, path):
+    def check_clipping(self, path, parts=()):
         load_numpy()
+        clipped_parts = []
+        for key, part in parts:               # each source on its own: which one clipped
+            if part:
+                count, seconds = clip_count(part)
+                try:
+                    clips_file(part).write_text(str(count if clipped(count, seconds) else 0))
+                except OSError:
+                    pass
+                if clipped(count, seconds):
+                    clipped_parts.append(library.part_label(key))
         count, seconds = clip_count(path)
         bad = clipped(count, seconds)
         try:
             clips_file(path).write_text(str(count if bad else 0))
         except OSError:
             pass
-        if bad:                               # set FM-1 USB to master and turn it down, or lower its tracks
+        if clipped_parts:                     # the source turned down at the source (its own volume or USB level)
+            self.say(f"{', '.join(clipped_parts)} clipped: turn it down", 6)
+        elif bad:                             # set FM-1 USB to master and turn it down, or lower its tracks
             self.say(f"Clipped {count}x: turn the FM-1 down", 6)
 
     def toggle_recording(self):
@@ -490,6 +584,20 @@ class MeterScreens:
             self.say("SD card full")
             return
         path = folder / f"{datetime.now():%Y-%m-%d_%H%M%S}_fm1.wav"
+        channels = (self.mix_channels() if hasattr(self, "mix_channels") else [])[:len(PARTS_MAP) // 2]
+        if self.state.get("rec_parts") and len(channels) > 1:
+            # one recorder for every source (a recorder each, and the mix off the speaker, maxed the CPU out);
+            # the parts and the mix are made from it after Stop, so they line up to the sample
+            raw = folder / ".parts" / path.name
+            raw.parent.mkdir(exist_ok=True)
+            if not self.recorder.start_parts(raw, 2 * len(channels), self.state["audio_rate"]):
+                self.say("Can't record (pw-record?)")
+                return
+            keys = [key for key, _ in channels]
+            self.parts_job = {"path": path, "keys": keys, "levels": {k: self.mix_level(k) for k in keys}}
+            sources = [node["name"] for _, node in channels]
+            threading.Thread(target=lambda: (time.sleep(1.5), link_parts(sources)), daemon=True).start()
+            return
         if not self.recorder.start(self.capture_target(), path, self.state["audio_rate"]):
             self.say("Can't record (pw-record?)")
 

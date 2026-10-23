@@ -449,6 +449,69 @@ def test_recordings():
     assert not rec.exists() and app.screen == "settings"
 
 
+def test_recording_parts():
+    """Record parts: one recorder for every source; after Stop, a WAV a source and the mix at their levels,
+    the frames before the links left out; one take in the lists; Delete takes them all"""
+    import wave
+    import numpy as np
+    import meters
+    app = make_app()
+    for f in library.folder("recordings").glob("*"):
+        f.unlink()
+    app.source = {"id": 1, "name": "alsa_input.usb-Felucca-00", "label": "Felucca"}
+    app.source_b = {"id": 3, "name": "alsa_input.usb-Felucca-00.2", "label": "Felucca"}
+    app.others = [{"id": 4, "name": "alsa_input.usb-SMK-37", "label": "SMK-37+VA"}]
+    app.state["rec_parts"], app.state["mix"] = True, {"a": 100, "b": 50, "usb": 200}
+    fake, linked = FakePwPlay(), []
+    meters.subprocess.Popen = fake
+    real_link, meters.link_parts = meters.link_parts, linked.append
+    try:
+        app.toggle_recording()
+        cmd = fake.cmd
+        assert cmd[:3] == ["pw-record", "--target", "0"] and "fm1-rec-parts" in cmd[4]
+        assert cmd[cmd.index("--channels") + 1] == "6" and cmd[cmd.index("--channel-map") + 1] == "FL,FR,FC,LFE,RL,RR"
+        raw = Path(cmd[-1])
+        frames = np.zeros((48000 + 100, 6), dtype="<i2")          # 100 frames before the links: zeros
+        frames[100:] = [1000, -1000, 2000, -2000, 300, -300]      # A, B, the SMK-37
+        with wave.open(str(raw), "wb") as w:
+            w.setnchannels(6)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(frames.tobytes())
+        time.sleep(1.7)
+        assert linked == [["alsa_input.usb-Felucca-00", "alsa_input.usb-Felucca-00.2", "alsa_input.usb-SMK-37"]]
+        app.finish_recording("Saved: {} recorded")
+        assert "+ 3 parts" in app.message and app.parts_job is None
+        take = raw.name
+        for _ in range(200):                                       # split, then checked, in the background
+            if Path(str(raw.parent.parent / take) + ".clips").exists():
+                break
+            time.sleep(0.05)
+    finally:
+        meters.subprocess.Popen = FakePwPlay.real
+        meters.link_parts = real_link
+    folder = library.folder("recordings")
+
+    def first(name):
+        with wave.open(str(folder / name)) as w:
+            return w.getnframes(), list(np.frombuffer(w.readframes(1), dtype="<i2"))
+    assert first(take.replace(".wav", "-b.wav")) == (48000, [2000, -2000])
+    assert first(take) == (48000, [1000 + 1000 + 600, -2600])                   # 1000 + 2000 x 0.5 + 300 x 2
+    listing = library.listing()["recordings"]
+    assert [r["name"] for r in listing] == [take]                              # the parts are under it
+    assert [(x["part"], x["label"], x["seconds"]) for x in listing[0]["parts"]] == [
+        ("a", "FM-1 A", 1), ("b", "FM-1 B", 1), ("usb0", "USB keys", 1)]
+    app.pick_recording(take)
+    assert [i[2] for i in app.pick["items"]] == ["play", "edit", "parts", "delete"]
+    app.recording_action(take, "parts")
+    assert [i[0] for i in app.pick["items"]] == ["FM-1 A", "FM-1 B", "USB keys"]
+    app.recording_action(take, "delete")
+    assert app.confirm["lines"][-1] == "and its 3 parts"
+    app.confirm["action"]()
+    assert not list(folder.glob("*.wav"))                                      # the take and its parts
+    app.state["rec_parts"] = False
+
+
 def test_sample_editor():
     """Settings > Sample editor: a recording or a sample; markers, fades, note, Save into the samples."""
     from test_library import write_recording
@@ -548,9 +611,10 @@ def test_mixer():
     assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]      # one source: no mixer
     app.others = others
     rows = app.settings_rows()
-    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_usb", "USB keys level")]
+    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_usb", "USB keys level"),
+                                         ("rec_parts", "Record parts")]
     app.source_b = source_b
-    assert [r[0] for r in app.settings_rows()[3:]] == ["mix_a", "mix_b", "mix_usb"]
+    assert [r[0] for r in app.settings_rows()[3:]] == ["mix_a", "mix_b", "mix_usb", "rec_parts"]
     app.setting = 4                                                  # FM-1 B: down 4 steps of 5%
     keys(app, "press", "down", "down", "down", "down")
     assert app.mix_level("b") == 80 and app.settings_rows()[4][2] == "± 80%"
@@ -713,6 +777,7 @@ if __name__ == "__main__":
     for name, fn in [("test_flows", test_flows), ("test_auto_backup_schedule", test_auto_backup_schedule),
                      ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate),
                      ("test_clock", test_clock), ("test_recordings", test_recordings),
+                     ("test_recording_parts", test_recording_parts),
                      ("test_midi_matrix", test_midi_matrix), ("test_two_fm1s", test_two_fm1s), ("test_mixer", test_mixer), ("test_pw_watch", test_pw_watch),
                      ("test_arp_rows_and_presets", test_arp_rows_and_presets),
                      ("test_web_link", test_web_link)]:

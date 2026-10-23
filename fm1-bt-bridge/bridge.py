@@ -56,6 +56,7 @@ DEFAULTS = {
     "sample_level": "-6 dB",  # how loud samples go into the FM-1: "-6 dB", "-3 dB", "full" (SLOOP's own)
     "library_fm1": "A",     # with two FM-1s on a hub, the one backups, restores and loads go to (library.py reads it)
     "mix": {"a": 100, "b": 100, "usb": 100},   # the mixer's levels (%, to 200): FM-1 A, FM-1 B, USB keyboards' sound
+    "rec_parts": False,     # while mixing, recordings also keep each source on its own ("..._fm1-a.wav" etc.)
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -962,7 +963,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             keys = list(dict.fromkeys("usb" if k.startswith("usb") else k for k, _ in self.mix_channels()))
             mix = [(f"mix_{k}", names[k], ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
                    for k in keys] if len(self.mix_channels()) > 1 else []
-            return [("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)] + mix
+            parts = [("rec_parts", "Record parts", onoff(self.state["rec_parts"]))] if mix else []
+            return ([("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
+                    + mix + parts)
         if self.settings_menu == "midi":
             keys = getattr(self.midi, "controllers", None) or []
             return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
@@ -999,6 +1002,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.save_settings()
             if self.state["metronome"] and not self.sink:
                 self.say("Metronome: connect a speaker")
+        elif key == "rec_parts":
+            self.state["rec_parts"] = not self.state["rec_parts"]
+            self.save_settings()
+            self.say("Recordings keep each source too" if self.state["rec_parts"] else "Recordings: the mix only", 2)
         elif key == "library_fm1":
             self.state["library_fm1"] = "B" if self.state["library_fm1"] == "A" else "A"
             self.save_settings()
