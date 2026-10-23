@@ -1,8 +1,8 @@
 # FM-1 Companion
 
-[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.1.mp4)
+[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)
 
-**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Sloop-Companion-Device@main/docs/video/fm1-companion-demo-v2.6.1.mp4)**
+**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)**
 (1:46, with sound): the box's own screens, all eleven meters, the settings, the MIDI matrix and the sample
 editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
 
@@ -79,7 +79,8 @@ music playing: about a quarter of the CPU while shown, and no audio dropouts.
 **Good to know:** devices behind a USB 2 hub time out on the Pi Zero at high speed, so the installer now
 sets the box's USB to full speed, 12 Mbit/s (`dwc_otg.speed=1`, from the next boot); the FM-1 and USB
 keyboards are 12 Mbit/s devices anyway. A
-powered hub also feeds the FM-1 instead of the Pi, which ends the reboots when it's plugged in while running.
+bonus: with the FM-1 on the hub, you can unplug it from the hub and plug it back in while the box runs, with
+no reboot.
 
 <details><summary>Earlier: v2.6</summary>
 
@@ -218,8 +219,9 @@ sudo reboot
 - **Recordings clip if the FM-1 sends USB at full level** with several tracks playing: it clips inside the
   FM-1, before the box gets the sound. The box warns you after the take; set the FM-1's USB audio to
   master with the knob around half (or lower its track levels) for clean takes.
-- **Plugging the FM-1 in while the Pi is running can reboot the Pi.** The Zero's USB port has no
-  current limit. Connect the FM-1 first, or use a powered USB hub.
+- **Plugging the FM-1 straight into the box while the Pi is running can reboot the Pi.** The Zero's USB
+  port has no current limit. Connect the FM-1 first, or put a USB hub in between: unplugging the FM-1 from
+  the hub and plugging it back in doesn't reboot the box (plugging the hub itself into the box may still).
 - **USB runs at 12 Mbit/s** so a hub works on the Pi Zero. Fine for MIDI and the FM-1's audio, but a
   USB 2 device that needs high speed (a fast USB stick, say) is slower behind it.
 - **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send

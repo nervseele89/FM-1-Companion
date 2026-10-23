@@ -360,7 +360,9 @@ python3 ~/.local/share/fm1-bridge/library.py --help
 
 ## Good to know
 
-- **Connect the FM-1 before you power the Pi.** Plugging it in while the Pi is running can reboot
+- **Connect the FM-1 before you power the Pi, or use a USB hub.** Through a hub, the FM-1 can be
+  unplugged from the hub and plugged back in while the box runs, with no reboot (plugging the hub itself
+  into the box may still reboot it). Plugged straight into the box while the Pi is running, it can reboot
   the Pi: the Zero's USB port has no current limit, so the FM-1's surge (it also charges its
   battery) briefly drops the supply voltage. A strong 5 V 2.5 A supply with a short cable helps. A
   powered USB hub between the OTG adapter and the FM-1 avoids it completely.
