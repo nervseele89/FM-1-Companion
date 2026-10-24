@@ -59,6 +59,20 @@ def test_page_and_listing():
     assert status == 200 and len(lib["backups"]) == 1 and lib["backups"][0]["projects"] == ["A", "D"]
 
 
+def test_installable():
+    status, page, _ = call("/")
+    assert b'rel="manifest" href="/manifest.webmanifest"' in page and b"apple-touch-icon" in page
+    status, body, headers = call("/manifest.webmanifest")
+    manifest = json.loads(body)
+    assert status == 200 and headers["Content-Type"].startswith("application/manifest+json")
+    assert manifest["display"] == "standalone" and manifest["start_url"] == "/"
+    for icon in manifest["icons"] + [{"src": "/icons/apple-touch-icon.png"}]:
+        status, png, headers = call(icon["src"])
+        assert status == 200 and png.startswith(b"\x89PNG") and headers["Content-Type"] == "image/png", icon
+    for bad in ("/icons/nope.png", "/icons/../web.py", "/icons/..%2Fweb.py", "/icons/icon-192.txt"):
+        assert call(bad)[0] == 404, bad
+
+
 def test_uploads():
     wav = write_wav(TMP / "bass_C2.wav", 0.1).read_bytes()
     assert jcall("/api/upload?folder=samples&name=bass_C2.wav", raw=wav)[1]["ok"]
