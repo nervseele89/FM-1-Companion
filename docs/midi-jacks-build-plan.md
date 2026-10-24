@@ -148,3 +148,30 @@ None of the four is used by the HAT. **Power off the Pi while wiring.**
   added later without changing the code.
 - Keep Bluetooth on its own serial port: moving it to the weaker one to free the better one for MIDI would cost
   headphone audio quality.
+
+## Route C: a Pi Pico hub with five TRS jacks (IN A, OUT A, THRU A, IN B, OUT B)
+
+![The Pico hub on a full-size breadboard](images/pico-trs-midi-breadboard.png)
+
+The Pi Zero has one spare serial port, so a Raspberry Pi Pico takes the MIDI jacks and talks to the Pi over that
+one port. Two 6N137s for the two INs, everything else is resistors.
+
+| From | To |
+|---|---|
+| Pi pin 2 (5 V) | Pico pin 39 (VSYS) |
+| Pi pin 4 (5 V) | 6N137 A and B pin 8 (and pin 7, Enable) |
+| Pi pin 6 (GND) | GND rails, Pico pins 3 and 38 |
+| Pi pin 8 (TX, GPIO14) | Pico pin 2 (GP1, UART0 RX) |
+| Pi pin 10 (RX, GPIO15) | Pico pin 1 (GP0, UART0 TX) |
+| Pico pin 36 (3V3) | + rails (3.3 V) |
+| IN A: ring → 220 Ω → 6N137 A pin 2, tip → pin 3 | 6N137 A pin 6 → Pico pin 7 (GP5), 1 kΩ to 3.3 V |
+| IN B: ring → 220 Ω → 6N137 B pin 2, tip → pin 3 | 6N137 B pin 6 → Pico pin 10 (GP7), 1 kΩ to 3.3 V |
+| OUT A: ring ← 47 Ω ← 3.3 V, tip ← 220 Ω ← | Pico pin 6 (GP4, UART1 TX) |
+| THRU A (hardware): ring ← 47 Ω ← 3.3 V, tip ← 220 Ω ← | 6N137 A pin 6 (the IN A signal) |
+| OUT B: ring ← 47 Ω ← 3.3 V, tip ← 220 Ω ← | Pico pin 9 (GP6, PIO TX) |
+| Each 6N137 | 1N4148 across pins 2-3 (stripe on pin 2), 100 µF from pin 8 (+) to pin 5 (−), pin 5 to GND |
+| OUT/THRU sleeves | GND; IN sleeves open |
+
+5 V never goes on a rail (the Pico's and the Pi's pins are 3.3 V only). To flash the Pico over USB, unplug its
+VSYS wire first so the computer doesn't power the Pi through it. Each OUT can also be switched in software to
+THRU A or THRU B; the Pico does that copy itself, so it's near-instant.

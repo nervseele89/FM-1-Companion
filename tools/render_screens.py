@@ -220,6 +220,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("outdir")
     parser.add_argument("--fonts", default="/usr/share/fonts/truetype/dejavu")
+    parser.add_argument("--desk", action="store_true", help="also the desk box's touch screens and meters (desk-*.png)")
     args = parser.parse_args()
     fonts = Path(args.fonts)
     bridge.font = lambda size, bold=False: ImageFont.truetype(
@@ -249,6 +250,98 @@ def main():
     oled(display.image).save(out / "screen-starting.png", optimize=True)
     print("wrote", out / "screen-starting.png")
     meters_sheet(state, out)
+    if args.desk:
+        desk_screens(state, out)
+
+
+class RgbCapture:
+    """the desk box's touchscreen stand-in: keeps the last full-colour frame"""
+
+    def __init__(self):
+        self.image, self.theme = None, None
+
+    def show_rgb(self, img):
+        self.image = img.copy()
+
+    def show(self, img):
+        pass
+
+
+def desk_screens(state, out):
+    """The desk box's touch screens (desk-ui-TAB.png), in SLOOP's GREEN and in a custom theme like FM-1 A's
+    (desk-ui-TAB-theme.png): two FM-1s, the SMK-37's synth and a speaker"""
+    import deskui
+    import sloopstyle
+    meters.load_numpy()
+    custom = sloopstyle.Theme("MY THEME", [(8, 36, 48), (24, 76, 96), (40, 124, 168), (56, 180, 240),
+                                           (144, 212, 248)], None, (40, 60, 64), (248, 252, 248))
+    for suffix, theme in (("", sloopstyle.Theme("GREEN")), ("-theme", custom)):
+        for tab in deskui.TABS:
+            display = RgbCapture()
+            app = bridge.App(display, dict(state, mix={"a": 100, "b": 80, "usb": 175}, rec_parts=True))
+            app.loop, app.midi, app.wifi = Loop(), Midi(), False
+            app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
+            app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
+            app.source_b = {"id": 3, "name": "alsa_input.usb-Felucca.2", "label": "Felucca"}
+            app.others = [{"id": 4, "name": "alsa_input.usb-SMK", "label": "SMK-37+VA"}]
+            app.fw_label = "SLOOP 2.8"
+            app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
+            app.volume, app.playing = 64, True
+            app.battery = {"percent": 78, "mv": 3818, "plugged": False}
+            app.levels = Levels()
+            app.library_state = lambda now=None: None
+            routes = __import__("blemidi").default_routes()
+            routes["USB>FM-1"]["transpose"] = 12
+            app.state["routes"] = routes
+            ui = deskui.DeskUI(app, display)
+            ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
+            ui.theme = theme
+            ui.open_tab(tab)
+            for _ in range(4 if tab == "METER" else 1):
+                ui.render(time.monotonic(), force=True)
+                time.sleep(0.1)
+            name = f"desk-ui-{tab.lower()}{suffix}.png"
+            display.image.save(out / name, optimize=True)
+            print("wrote", out / name)
+    desk_meters_sheet(state, out, custom)
+
+
+def desk_meters_sheet(state, out, theme):
+    """The desk box's eleven meters (desk-meter-NAME.png) and all of them on one sheet (desk-meters.png)"""
+    import deskui
+    frames = []
+    for i, name in enumerate(meters.METERS):
+        display = RgbCapture()
+        app = bridge.App(display, dict(state, meter=i))
+        app.loop, app.midi, app.wifi = Loop(), Midi(), False
+        app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
+        app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
+        app.levels = Levels()
+        app.library_state = lambda now=None: None
+        if name == "Tape":
+            app.recorder, app.tape_done = Recording(), 0.35
+        ui = deskui.DeskUI(app, display)
+        ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
+        ui.theme = theme
+        ui.open_tab("METER")
+        if name == "History":
+            ui.meters.hist = [-6 - 18 * abs(((k % 32) - 16) / 16) - (8 if k % 7 == 0 else 0) for k in range(160)]
+            ui.meters.hnext = time.monotonic() + 60
+        count = 60 if name == "Waterfall" else 5
+        for _ in range(count):
+            ui.render(time.monotonic(), force=True)
+            if name != "Waterfall":
+                time.sleep(0.1)
+        frames.append(display.image)
+        display.image.save(out / f"desk-meter-{name.lower()}.png", optimize=True)
+        print("wrote", out / f"desk-meter-{name.lower()}.png")
+    w, h, gap, cols = 480, 320, 12, 3
+    rows = (len(frames) + cols - 1) // cols
+    sheet = Image.new("RGB", (cols * w + (cols - 1) * gap, rows * h + (rows - 1) * gap), (255, 255, 255))
+    for k, f in enumerate(frames):
+        sheet.paste(f, ((k % cols) * (w + gap), (k // cols) * (h + gap)))
+    sheet.save(out / "desk-meters.png", optimize=True)
+    print("wrote", out / "desk-meters.png")
 
 
 class Levels:

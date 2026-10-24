@@ -246,26 +246,39 @@ class Sloop:
         items = self.list_objects()
         total, done, objects = sum(it["len"] for it in items), 0, []
         for it in items:
-            data = bytearray()
-            for off in range(0, it["len"], CHUNK):
-                n = min(CHUNK, it["len"] - off)
-                r = Reader(self.link.request(BK_GET, [it["id"], *u35(off), n & 0x7F, n >> 7], timeout=1.5, retries=2))
-                _, rc, _, _ = r.b(), r.b(), r.u35(), r.b() | (r.b() << 7)
-                if rc:
-                    raise SloopError("rc", "the FM-1 changed during the backup: try again" if rc == 5
-                                     else f"reading {NAMES.get(it['id'], it['id'])} failed (rc {rc})")
-                chunk = unpack7(r.a[r.i:])
-                if len(chunk) != n:
-                    raise SloopError("bad", f"{NAMES.get(it['id'], it['id'])}: short read")
-                data += chunk
+            def counted(n):
+                nonlocal done
                 done += n
                 progress(done, total)
-            if crc32(data) != it["crc"]:
-                raise SloopError("rc", "the FM-1 changed during the backup: try again")
+            data = self.read_object(it, counted)
             objects.append({"id": it["id"], "len": it["len"], "crc": it["crc"],
                             "data": base64.b64encode(bytes(data)).decode()})
         return {"format": FORMAT, "version": VERSION, "firmware": self.version,
                 "date": datetime.now().astimezone().isoformat(timespec="seconds"), "objects": objects}
+
+    def read_object(self, it, progress=lambda n: None):
+        """one object of list_objects() ({id, len, crc}) -> its bytes, checked"""
+        data = bytearray()
+        for off in range(0, it["len"], CHUNK):
+            n = min(CHUNK, it["len"] - off)
+            r = Reader(self.link.request(BK_GET, [it["id"], *u35(off), n & 0x7F, n >> 7], timeout=1.5, retries=2))
+            _, rc, _, _ = r.b(), r.b(), r.u35(), r.b() | (r.b() << 7)
+            if rc:
+                raise SloopError("rc", "the FM-1 changed during the backup: try again" if rc == 5
+                                 else f"reading {NAMES.get(it['id'], it['id'])} failed (rc {rc})")
+            chunk = unpack7(r.a[r.i:])
+            if len(chunk) != n:
+                raise SloopError("bad", f"{NAMES.get(it['id'], it['id'])}: short read")
+            data += chunk
+            progress(n)
+        if crc32(data) != it["crc"]:
+            raise SloopError("rc", "the FM-1 changed during the backup: try again")
+        return bytes(data)
+
+    def read_objects(self, ids):
+        """{id: bytes} of the objects asked for that the FM-1 has (SLOOP lists the theme only when there is one)"""
+        self.require_backup()
+        return {it["id"]: self.read_object(it) for it in self.list_objects() if it["id"] in ids}
 
     # ---- writing
     def check_stopped(self):

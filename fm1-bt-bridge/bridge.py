@@ -27,6 +27,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont
 
 import battery
+import device
 import library
 import sloop
 from libui import LIBRARY_KEYS, LibraryScreens
@@ -57,6 +58,9 @@ DEFAULTS = {
     "library_fm1": "A",     # with two FM-1s on a hub, the one backups, restores and loads go to (library.py reads it)
     "mix": {"a": 100, "b": 100, "usb": 100},   # the mixer's levels (%, to 200): FM-1 A, FM-1 B, USB keyboards' sound
     "rec_parts": False,     # while mixing, recordings also keep each source on its own ("..._fm1-a.wav" etc.)
+    "build": "auto",        # "pocket" (Zero + OLED HAT), "desk" (Pi 3/4 + 3.5" touchscreen) or "auto" (device.py)
+    "touch_cal": [3900, 200, 3900, 200, True],   # the desk touchscreen: raw x left/right, y top/bottom, swap
+    "desk_theme": "follow",  # the desk box's colours: "follow" (FM-1 A's, as SLOOP shows them) or a SLOOP palette
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -670,6 +674,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback(state["audio_rate"])
         self.mixer = Mixer(state["audio_rate"])        # a second FM-1, or a USB keyboard's sound: mixed
+        self.box = {"build": "pocket", "board": "", "screen": None, "can": set()}   # main() fills it in
+        self.desk = None                      # the desk box's touch screens (deskui.DeskUI), from main()
         self.metro_sent = None                # what the MIDI process was last told about the metronome
         self.source = self.sink = self.source_b = None
         self.others = []                      # other USB sound: a keyboard's own synth
@@ -1186,6 +1192,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.mode = "on"
 
     def screensaver(self):
+        if self.desk:                         # an LCD doesn't burn in (and it's on the desk, plugged in)
+            return
         idle = time.monotonic() - self.last_activity
         if self.busy or self.scanning:
             idle = 0
@@ -1217,6 +1225,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
 
     def render(self, force=False):
         now = time.monotonic()
+        if self.desk:                         # the desk box: its own screens, the classic ones under MORE
+            if self.desk.classic and self.screen == "status":
+                self.desk.classic, self.shown = False, None       # backed out of a classic screen: home again
+            if not self.desk.classic:
+                self.desk.render(now, force)
+                return
         view = self.view(now)
         if view == self.shown and not force:
             return
@@ -1412,6 +1426,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.web_commands()                       # the web page's settings (a file check: cheap)
             if event and event[0] in KEYS:
                 self.on_key(event[0], len(event) > 1 and event[1])
+            elif event and event[0] == "touch" and self.desk:   # the desk UI's screens (desk.Touch)
+                self.last_activity = time.monotonic()
+                self.desk.touch(*event[1:], time.monotonic())
             elif event and event[0] == "status" and event[1]:
                 self.last_activity = time.monotonic()     # connects and disconnects wake the screen
                 self.wake()
@@ -1452,8 +1469,12 @@ def splash(display):
 def main():
     state = load_state()
     sim, test = "--sim" in sys.argv, "--test-screen" in sys.argv
+    box = device.detect(state["build"])
     if sim:
         display = SimDisplay(sys.argv[sys.argv.index("--sim") + 1])
+    elif box["build"] == "desk":              # Pi 3/4 + 3.5" touchscreen: the same screens, larger, in colour
+        import desk
+        display = desk.TftDisplay(box["screen"][0] if box["screen"] else "/dev/fb1")
     else:
         display = SH1106(state["rotate"], state["contrast"])
     if test:
@@ -1471,8 +1492,13 @@ def main():
         midi.set_clock(state["clock_mode"], state["bpm"])
         midi.set_routes(state["routes"])
     app = App(display, state)
-    app.midi = midi
-    if not sim:
+    app.midi, app.box = midi, box
+    if not sim and box["build"] == "desk":    # its own touch screens; the classic ones' on-screen keys
+        import deskui
+        app.desk = deskui.DeskUI(app, display)
+        app.keys = desk.start_touch(KeyTimer(app.post), display, state["touch_cal"], ui=app.desk,
+                                    ui_touch=lambda kind, x, y: app.post("touch", kind, x, y))
+    elif not sim:
         flip = state["flip_joystick"]
         if flip is None:                      # follow the screen: rotate 0 is upside down to Waveshare's labels
             flip = state["rotate"] == 0

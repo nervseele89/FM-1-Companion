@@ -41,6 +41,8 @@ FOLDERS = ("backups", "projects", "samples", "firmware", "recordings")
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or tempfile.gettempdir())
 STATE, LOCK = RUNTIME / "fm1-library.json", RUNTIME / "fm1-library.lock"
 FIRMWARE = RUNTIME / "fm1-firmware.json"     # what the connected FM-1 last said it runs
+THEME = RUNTIME / "fm1-theme.json"           # FM-1 A's colours (SLOOP MENU > COLOR), for the desk box's screen
+                                             # (the pocket box's OLED has one colour: it never asks)
 SD = Path(os.environ.get("FM1_SD_LIBRARY", "/boot/firmware/fm1-library"))
 SD_SYNC = "/usr/local/sbin/fm1-sd-sync"
 KEEP_AUTO = 20
@@ -242,6 +244,34 @@ def target_card():
     except (OSError, ValueError, AttributeError):
         which = "A"
     return cards[1] if which == "B" else cards[0]
+
+
+def desk_box():
+    """True on the desk box (Pi 3/4 + touchscreen: device.py), the only one with themes"""
+    import device
+    try:
+        setting = json.loads(SETTINGS.read_text()).get("build", "auto")
+    except (OSError, ValueError, AttributeError):
+        setting = "auto"
+    return device.detect(setting)["build"] == "desk"
+
+
+def read_theme(dev=None):
+    """FM-1 A's colours as SLOOP shows them (its palette, or the theme made in SLOOP's web editor when that's
+    chosen), saved in THEME for the desk box's screen. dev: an open FM-1 A, else it's opened here"""
+    import sloopstyle
+    cards = sloop.fm1_cards()
+    if dev is None or (len(cards) > 1 and target_card() != cards[0]):
+        dev = sloop.Sloop(sloop.Link(card=cards[0] if len(cards) > 1 else None))
+    if not dev.can_backup():
+        return None                           # not SLOOP 2.3+: no settings to read (the screen keeps its own)
+    objects = dev.read_objects({1, 11})
+    theme = sloopstyle.theme_from_objects(objects.get(1, b""), objects.get(11, b""))
+    try:
+        THEME.write_text(json.dumps(sloopstyle.theme_dict(theme)))
+    except OSError:
+        pass
+    return theme
 
 
 def connect():
@@ -618,6 +648,11 @@ def main(argv=None):
         elif command == "identify":
             with Job("identify") as job:
                 dev = connect()
+                if desk_box():                # and FM-1 A's colours, for the desk box's screen
+                    try:
+                        read_theme(dev)
+                    except sloop.SloopError:
+                        pass
                 job.done(firmware_label() or str(dev.version))
         elif command == "info":
             dev = connect()

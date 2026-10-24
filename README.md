@@ -11,9 +11,9 @@ editor, with an overlay of each button press. The music was played on the FM-1 a
 A pocket-sized companion box for the **M-VAVE FM-1** pocket synth running custom firmware such as
 [Sloop](https://github.com/isod89/sloop-fm1). It started as a way to add the Bluetooth those firmwares leave switched off, and grew into a small studio
 sidekick: it plays the FM-1 through wireless speakers and keyboards, records it, shapes its MIDI, shows what
-it's doing on eleven meters, and looks after everything stored on it, with no computer needed. It's a
-Raspberry Pi Zero W with a Waveshare 1.3" OLED HAT, plugged into the FM-1 by USB, and you run it from its
-own screen and joystick or from your phone.
+it's doing on eleven meters, and looks after everything stored on it, with no computer needed. It comes in two builds that share one codebase: the **pocket box**, a Raspberry Pi Zero W with a Waveshare
+1.3" OLED HAT, and the **desk box** (new, see below), a Raspberry Pi 3 B+ with a 3.5" touchscreen. Either plugs
+into the FM-1 by USB, and you run it from its own screen or from your phone.
 
 - **Wireless audio and MIDI:** the FM-1 plays on Bluetooth headphones or a speaker, and the box shows up
   as a Bluetooth MIDI device, **"FM-1 Companion"**, so a keyboard, iPad, phone or computer can play the FM-1
@@ -56,6 +56,53 @@ ASMedia ASM1074 USB hub, two FM-1s together on that hub with the SMK-37 running 
 tested on the real FM-1 with a backup, a restore (read back byte for byte), a project load, a sample load and the
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
+
+## The desk box: Desk v1.0
+
+| Home, in FM-1 A's own colours | The mixer |
+|---|---|
+| ![Desk home: the sources as SLOOP-style tiles, tempo, REC, START and TAP](docs/images/desk-ui-home-theme.png) | ![Desk mixer: a slider for FM-1 A, FM-1 B, USB keys and the speaker](docs/images/desk-ui-mix-theme.png) |
+| ![Desk MIDI routes: tap a route to switch it](docs/images/desk-ui-midi-theme.png) | ![Desk More: the screens not redrawn for touch yet](docs/images/desk-ui-more-theme.png) |
+
+A second build of the Companion for the desk: a **Raspberry Pi 3 B+** with a **3.5" 480×320 touchscreen**, a
+**PiSugar 3 Plus** battery (5000 mAh), and a **card slot** for expansion cards. It runs the same software as the
+pocket box (audio, the mixer, recording, MIDI, the library, the web app) with screens of its own, made for
+touch and drawn in the style of [SLOOP](https://github.com/isod89/sloop-fm1).
+
+> **Hardware testing starts 10/24/2026.** Desk v1.0 is the software, built and tested on a computer against
+> the real drawing code; the Pi 3, the screen and the PiSugar 3 Plus arrive that day. Expect the touch
+> calibration and the screen driver setting to change once it's on the real hardware.
+
+**What's in Desk v1.0**
+- **Five tabs along the bottom:** HOME (the sources as SLOOP-style tiles in the track colours, the tempo, and
+  big REC, START and TAP buttons), MIX (a slider for each source and the speaker), MIDI (the routes: tap one to
+  switch it, hold it to open its settings), METER and MORE.
+- **SLOOP's look:** SLOOP's own pixel font (Terminus), its five palettes (Green, Amber, Cyan, Red, Mono) and its
+  four track colours, from SLOOP's source.
+- **Follows FM-1 A's colours:** the box asks FM-1 A over USB what SLOOP's MENU › COLOR is set to (a palette, or
+  the custom theme made in SLOOP's web editor) and uses the same. More › Theme picks a palette instead. The
+  pocket box keeps its blue OLED and never asks.
+- **All eleven meters redrawn** full-width and in colour: LED bars, real VU dials, a 32-band spectrum, a
+  reel-to-reel tape deck, a big tuner, a 3-octave keyboard, a coloured waterfall and more.
+- **More** opens what isn't redrawn for touch yet (Recordings, the sample editor, Sloop, FM-1, settings) as the
+  pocket box's screens, larger, in the theme's colours, with on-screen keys. Backing out returns to the tabs.
+- **Expansion cards:** a card slot with a pin map, a card ID on three pins so the box knows which card is in,
+  and the first card planned: the Pico MIDI card with five TRS jacks. See
+  [docs/desk-expansion-cards.md](docs/desk-expansion-cards.md).
+- **One codebase:** the box detects its build at start (`device.py`). The desk box's extras check what the
+  hardware can do, so they never appear on the pocket box, and `install.sh` sets up whichever build it's on.
+
+<details><summary>All eleven desk meters</summary>
+
+![The desk box's eleven meters in a custom theme](docs/images/desk-meters.png)
+</details>
+
+| In SLOOP's Green palette | |
+|---|---|
+| ![Desk home in Green](docs/images/desk-ui-home.png) | ![Desk mixer in Green](docs/images/desk-ui-mix.png) |
+
+**Parts:** Raspberry Pi 3 B+, a 3.5" 480×320 SPI touchscreen (ILI9486 display, XPT2046 touch: the common
+"3.5 inch RPi LCD"), a PiSugar 3 Plus, a 1-to-2 GPIO splitter for the card slot, and a microSD card.
 
 ## What's new in v2.8
 
@@ -229,6 +276,12 @@ sudo reboot
 | `fm1-bt-bridge/midiui.py` | The MIDI matrix screens on the box |
 | `fm1-bt-bridge/sampleui.py` | The sample editor's screen on the box |
 | `fm1-bt-bridge/battery.py` | The PiSugar 3 battery's charge, read over I2C |
+| `fm1-bt-bridge/device.py` | Which build a box is (pocket or desk) and what its hardware can do |
+| `fm1-bt-bridge/deskui.py` | The desk box's touch screens: the tabs, HOME, MIX, MIDI, METER, MORE |
+| `fm1-bt-bridge/deskmeters.py` | The eleven meters drawn for the desk box's screen |
+| `fm1-bt-bridge/desk.py` | The desk box's touchscreen and touch input (the kernel's framebuffer and touch device) |
+| `fm1-bt-bridge/sloopstyle.py` | SLOOP's palettes, track colours, font and themes, for the desk box |
+| `fm1-bt-bridge/vendor/fonts/` | Terminus, SLOOP's pixel font (SIL Open Font License, credited in `VENDORED.md`) |
 | `fm1-bt-bridge/sampler.py` | The sample editor's sums (trim, fades, normalize, reverse, the note), shared by the box and the web page |
 | `fm1-bt-bridge/metronome.py` | The metronome's click stream (run by the MIDI process) |
 | `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
@@ -242,6 +295,8 @@ sudo reboot
 | `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for the library, the screens, the meters, recording and playback, MIDI, the clock, the metronome and the web page (`python tests/test_library.py` etc.; needs mido, Pillow and numpy) |
 | `tools/midi_timing.py` | Analyses the Companion's Bluetooth MIDI timing log (`/dev/shm/fm1-midi-timing.log` on the Pi) |
 | `tools/render_screens.py` | Draws the OLED screens as PNG files for this README, without a Pi |
+| `docs/desk-expansion-cards.md` | The desk box's card slot: pins, card ID, the MIDI card |
+| `docs/midi-jacks-build-plan.md` | Building the TRS MIDI jacks (the Pico MIDI card's circuit) |
 | `docs/images/` | The photo and screen images |
 
 ## Known limits
@@ -271,3 +326,5 @@ sudo reboot
 ## License
 
 GPL-3.0, like Sloop. See [LICENSE](LICENSE).
+
+The desk box's palettes and track colours are SLOOP's (isod89/sloop-fm1, GPL-3.0), and its font is Terminus by Dimitar Toshkov Zhekov (SIL Open Font License 1.1), as SLOOP ships it.
