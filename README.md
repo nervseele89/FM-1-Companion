@@ -1,264 +1,93 @@
 # FM-1 Companion
 
-[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)
+**A studio sidekick for the M-VAVE FM-1 pocket synth.** Bluetooth audio and MIDI, a mixer, a recorder, a sample
+editor, eleven meters and a MIDI matrix, with no computer needed. By [XOXO Audio Labs](https://xoxoaudiolabs.com).
 
-**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/nervseele89/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)**
+**[xoxoaudiolabs.com](https://xoxoaudiolabs.com)** · [The Pocket](https://xoxoaudiolabs.com/products/fm1-companion-pocket/)
+· [The Studio](https://xoxoaudiolabs.com/products/fm1-companion-studio/) ·
+[Try the web app](https://xoxoaudiolabs.com/app/) (sample data, in your browser)
+
+[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)
+
+**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)**
 (1:46, with sound): the box's own screens, all eleven meters, the settings, the MIDI matrix and the sample
 editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
 
-<img src="docs/images/device-with-fm1.jpg" width="560" alt="The box on its PiSugar battery, cabled to the FM-1 running SLOOP">
+<img src="docs/images/device-with-fm1.jpg" width="560" alt="The Pocket on its PiSugar battery, cabled to the FM-1 running SLOOP">
 
-A pocket-sized companion box for the **M-VAVE FM-1** pocket synth running custom firmware such as
-[Sloop](https://github.com/isod89/sloop-fm1). It started as a way to add the Bluetooth those firmwares leave switched off, and grew into a small studio
-sidekick: it plays the FM-1 through wireless speakers and keyboards, records it, shapes its MIDI, shows what
-it's doing on eleven meters, and looks after everything stored on it, with no computer needed. It comes in two builds that share one codebase: the **Pocket**, a Raspberry Pi Zero W with a Waveshare
-1.3" OLED HAT, and the **Studio** (new, see below), a Raspberry Pi 3 B+ with a 3.5" touchscreen. Either plugs
-into the FM-1 by USB, and you run it from its own screen or from your phone.
+It started as a way to add the Bluetooth that custom FM-1 firmware such as [SLOOP](https://github.com/isod89/sloop-fm1)
+leaves switched off, and grew from there. Plug it into the FM-1 by USB and run it from its own screen or from
+your phone.
 
-- **Wireless audio and MIDI:** the FM-1 plays on Bluetooth headphones or a speaker, and the box shows up
-  as a Bluetooth MIDI device, **"FM-1 Companion"**, so a keyboard, iPad, phone or computer can play the FM-1
-  and hear back what it sends.
-- **USB keyboards and a second FM-1:** put a USB hub between the box and the FM-1 and plug in up to four
-  USB MIDI keyboards or controllers, and a second FM-1 if you have one. They're found by themselves and play
-  straight away; a mixer sets the level of each FM-1 and of a keyboard's own synth.
-- **A recorder and a sample editor:** record the FM-1 to WAV from the box, play takes back on the speaker,
-  and edit a take (or any sample) into a new sample: trim it, fade it, normalize or reverse it, and tune it
-  to the note it plays, ready to load into the FM-1.
-- **Playing tools:** a MIDI clock (follow your keyboard's clock, or be the master with tap tempo and
-  Start/Stop), a metronome, an arpeggiator and chord memory.
-- **A MIDI matrix:** route Bluetooth, USB keyboards, the FM-1s and the box to each other; transpose,
+## Two builds, one codebase
+
+| | **The Pocket** | **The Studio** |
+|---|---|---|
+| Computer | Raspberry Pi Zero W | Raspberry Pi 3 B+ |
+| Screen and controls | 1.3" OLED, joystick and three keys (Waveshare HAT) | 3.5" 480×320 touchscreen, in SLOOP's style and colours |
+| Battery | PiSugar 3 | PiSugar 3 Plus (5000 mAh) |
+| Adds | Fits in a pocket | A DAW control surface (Kraken, Ableton Live), network MIDI, any USB audio device on its own channel, four USB ports, Ethernet, a card slot (planned) |
+| Software | v2.8.2 | Studio v1.2 (hardware testing from October 2026) |
+| More | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-pocket/) | [Product page](https://xoxoaudiolabs.com/products/fm1-companion-studio/) |
+
+The installer works out which build it's on, and each build only shows what its hardware can do.
+
+## What it does
+
+- **Wireless audio and MIDI.** The FM-1 plays on Bluetooth headphones or a speaker, and the box shows up as a
+  Bluetooth MIDI device, **"FM-1 Companion"**, so a keyboard, iPad, phone or computer can play the FM-1.
+- **More keyboards, a second FM-1.** Through a USB hub (or the Studio's four ports): up to four USB MIDI
+  keyboards and a second FM-1, found by themselves. **FM-1 A** and **FM-1 B** keep their names by the hub
+  port they're on.
+- **A mixer.** Every sound source gets its own level, 0–200%: each FM-1 and each USB audio device (a
+  keyboard's own synth, a mic, an audio interface), added up before Bluetooth.
+- **A recorder and a sample editor.** Record to WAV, play takes back, and turn a take into a sample: trim,
+  fade, normalize, reverse and tune it to its note, ready to load into the FM-1. **Record parts** also keeps
+  each source as its own file next to the mix.
+- **Playing tools.** MIDI clock (follow, or lead with tap tempo and Start/Stop), metronome, arpeggiator and
+  chord memory.
+- **A MIDI matrix.** Route Bluetooth, USB keyboards, the FM-1s and the box to each other: transpose,
   re-channel, reshape velocity and filter, with four presets.
-- **Eleven meters:** level bars, VU needles, spectrum, scope, a reel-to-reel tape deck, a tuner, a MIDI
-  keyboard view, a waterfall, a stereo goniometer, a level history and a beat counter.
-- **Looks after the FM-1 (SLOOP 2.3+):** back up and restore everything on it (by hand or automatically),
-  load projects and samples, and install firmware. It downloads [SLOOP](https://github.com/isod89/sloop-fm1)
-  and, if you want it, isod89's experimental synthesizer firmware [Clipper](https://github.com/isod89/clipper-fm1).
-  Backups are SLOOP's own backup files, so they also open in SLOOP's web editor.
-- **A web app on your phone** (`http://fm1bridge.local`, Wi-Fi on): live status, volume and the playing
-  settings, the MIDI matrix, a sample editor with a waveform you drag, recordings you can play in the browser,
-  and uploads and downloads for the library.
-- **Its own screen and controls:** status, meters and a short settings menu in sections, on the HAT's OLED,
-  keys and joystick. Ready about a minute after power-on.
-- **Coming in v3:** 5-pin DIN MIDI In, Out and Thru.
+- **Eleven meters.** LED bars, VU needles, spectrum, scope, a reel-to-reel tape deck, a tuner, a keyboard view,
+  a waterfall, a stereo goniometer, a level history and a beat counter.
+- **Looks after the FM-1 (SLOOP 2.3+).** Back up and restore everything on it (by hand or automatically), load
+  projects and samples, and install firmware: [SLOOP](https://github.com/isod89/sloop-fm1), or isod89's
+  experimental [Clipper](https://github.com/isod89/clipper-fm1). Backups are SLOOP's own files, so they open in
+  SLOOP's web editor too.
+- **A web app on your phone** at `http://fm1bridge.local` (Wi-Fi, or Ethernet on the Studio): live status, the
+  mixer, the MIDI matrix, a sample editor with a waveform you drag, your recordings and the library.
+  Installable on your home screen. [Try it with sample data](https://xoxoaudiolabs.com/app/).
+- **Plays with your DAW (the Studio).** A network MIDI device (RTP-MIDI) whose DAW tab is a Mackie Control
+  surface for [Kraken](https://github.com/isod89/sodwave-site) and Ableton Live: 8 touch faders with track names,
+  meters, pan, solo, mute and the transport.
+- **Coming:** 5-pin DIN / TRS MIDI in, out and thru (the Pocket's v3, the Studio's first expansion card).
 
 ```
-                            ┌── Bluetooth audio ──▶ headphones / speaker
-                            ├◀── Bluetooth MIDI ──▶ keyboard / iPad / phone / Mac
-FM-1 ◀── USB ──▶ Pi Zero W ─┤
- (audio, MIDI, backups,     ├◀── USB hub ─────────▶ USB MIDI keyboards, a second FM-1
-  samples, firmware)        ├◀── Wi-Fi ───────────▶ web app on your phone
-                            └── OLED + joystick: meters, recorder, sample editor
+                               ┌── Bluetooth audio ──▶ headphones / speaker
+                               ├◀── Bluetooth MIDI ──▶ keyboard / iPad / phone / Mac
+FM-1 ◀── USB ──▶ Pocket/Studio ┤
+ (audio, MIDI, backups,        ├◀── USB ────────────▶ USB MIDI keyboards, USB audio, a second FM-1
+  samples, firmware)           ├◀── Wi-Fi/Ethernet ─▶ web app on your phone; a DAW (the Studio)
+                               └── its own screen: meters, mixer, recorder, sample editor
 ```
 
-Tested with a Pi Zero W on Raspberry Pi OS Lite (Trixie), Sloop 2.7 and 2.8 on the FM-1, a JBL Go 3
-speaker and an M-VAVE SMK-37 keyboard over Bluetooth MIDI (including its clock) and over USB through an
-ASMedia ASM1074 USB hub, two FM-1s together on that hub with the SMK-37 running Baud Girl. The library was
-tested on the real FM-1 with a backup, a restore (read back byte for byte), a project load, a sample load and the
-update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
-music playing: about a quarter of the CPU while shown, and no audio dropouts.
+## Getting started
 
-## The Studio: Studio v1.2
+Everything is in [`fm1-bt-bridge/`](fm1-bt-bridge/). Its [README](fm1-bt-bridge/README.md) covers what to buy,
+flashing the SD card, installing, the controls and troubleshooting. In short:
 
-| The sample editor, by touch | Every screen the Studio's own |
-|---|---|
-| ![The Studio's sample editor: the take full width, start and end markers to drag, zoom, fades, normalize, reverse, the note, play and save](docs/images/desk-ui-editor-theme.png) | ![A restore on the Studio, held to confirm: the button fills as it's held](docs/images/desk-page-confirm.png) |
+```
+scp -r fm1-bt-bridge YOUR_USER@fm1bridge.local:~
+ssh YOUR_USER@fm1bridge.local
+bash fm1-bt-bridge/install.sh
+sudo reboot
+```
 
-> **Hardware testing starts 10/24/2026.** The Studio's releases so far (v1.0 and v1.1 tagged desk-v1.0 and
-> desk-v1.1, from before the rename) are software built and tested on a computer; the Pi 3, the screen and the
-> PiSugar 3 Plus arrive that day.
-
-**New in Studio v1.2**
-- **No more Pocket screens on the Studio.** Everything has a page of its own, drawn for touch: settings
-  sections and lists (recordings, samples, backups, firmware) as big rows you tap, numbers with - / + on their
-  row, route details, the channel table, route presets and the speaker scan, a progress screen for jobs, and a
-  take playing. Each has a back button.
-- **Hold to confirm:** anything that writes to the FM-1 (a restore, a firmware install) asks you to hold a
-  button for 2 seconds; it fills as you hold, and Cancel is underneath.
-- **The sample editor, by touch:** the take full width, the start and end markers dragged with a finger (the
-  nearer one follows it), zoom in around the selection, fades with - / +, normalize, reverse, the note, play
-  and save.
-- **MORE** gains Wi-Fi and **Shut down** (held to confirm), since the Studio has no power key.
-
-<details><summary>Studio v1.1: a DAW over network MIDI, any USB audio device</summary>
-
-| Kraken or Ableton from the box | Any USB audio, each on its own slider |
-|---|---|
-| ![The DAW tab: eight faders with track names, levels, meters, pan, solo and mute, and the transport](docs/images/desk-ui-daw-theme.png) | ![The mixer with FM-1 A and B, an SMK-37, an 8-channel EP-136 on inputs 3-4, a USB mic and the speaker](docs/images/desk-ui-usb-theme.png) |
-
-**New in Studio v1.1**
-- **Plays with a DAW over the network:** the Studio is a network MIDI device (RTP-MIDI, as macOS's Network
-  MIDI and rtpMIDI on Windows speak it) with two ports. **FM-1 Companion** is music: it's **NET** in the MIDI
-  routes, so a DAW plays both FM-1s and your USB synths, sends them its clock, and records what they play.
-  **FM-1 Companion MCU** is a control surface.
-- **The DAW tab, a Mackie Control surface** for [Kraken](https://github.com/isod89/sodwave-site) (SLOOP's
-  creator's browser DAW) and **Ableton Live**: 8 touch faders with the DAW's track names, levels and meters,
-  pan, solo, mute and select, banks of 8, and play, stop, record, loop, rewind and fast forward, all lit to
-  match the DAW. Fader touch, so Live records automation cleanly, and the surface handshake some DAWs want.
-- **Pretty much any USB audio and MIDI device:** each USB audio device gets **its own mixer channel, named
-  after it** (an SMK-37's synth, a K.O. Sidekick, a USB mic), with its own level, slider, Home tile and file in
-  Record parts. An interface with more than two channels takes a pair of them (tap **3-4** above its slider for
-  the next), and a mono mic plays on both sides. Any class-compliant USB MIDI device appears in the routes by
-  itself, as before.
-- The **Pocket** gets the per-device levels too: its Settings › Audio has a row for each device. Network
-  MIDI and the DAW tab are the Studio's.
-
-**Connecting a DAW:** on the computer, open network MIDI (Mac: Audio MIDI Setup › MIDI Studio › Network;
-Windows: the free rtpMIDI driver) and connect a session to each of the box's two. In Kraken, set the port
-connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl as a control surface on that port.
-
-</details>
-
-<details><summary>Studio v1.0: the Studio's first release</summary>
-
-| Home, in FM-1 A's own colours | The mixer |
-|---|---|
-| ![Studio home: the sources as SLOOP-style tiles, tempo, REC, START and TAP](docs/images/desk-ui-home-theme.png) | ![Studio mixer: a slider for FM-1 A, FM-1 B, USB keys and the speaker](docs/images/desk-ui-mix-theme.png) |
-| ![Studio MIDI routes: tap a route to switch it](docs/images/desk-ui-midi-theme.png) | ![Studio More: the screens not redrawn for touch yet](docs/images/desk-ui-more-theme.png) |
-
-A second build of the Companion for the studio: a **Raspberry Pi 3 B+** with a **3.5" 480×320 touchscreen**, a
-**PiSugar 3 Plus** battery (5000 mAh), and a **card slot** for expansion cards. It runs the same software as the
-Pocket (audio, the mixer, recording, MIDI, the library, the web app) with screens of its own, made for
-touch and drawn in the style of [SLOOP](https://github.com/isod89/sloop-fm1).
-
-Expect the touch calibration and the screen driver setting to change once it's on the real hardware.
-
-**What's in Studio v1.0**
-- **Tabs along the bottom:** HOME (the sources as SLOOP-style tiles in the track colours, the tempo, and
-  big REC, START and TAP buttons), MIX (a slider for each source and the speaker), MIDI (the routes: tap one to
-  switch it, hold it to open its settings), METER, DAW (from v1.1) and MORE.
-- **SLOOP's look:** SLOOP's own pixel font (Terminus), its five palettes (Green, Amber, Cyan, Red, Mono) and its
-  four track colours, from SLOOP's source.
-- **Follows FM-1 A's colours:** the box asks FM-1 A over USB what SLOOP's MENU › COLOR is set to (a palette, or
-  the custom theme made in SLOOP's web editor) and uses the same. More › Theme picks a palette instead. The
-  Pocket keeps its blue OLED and never asks.
-- **All eleven meters redrawn** full-width and in colour: LED bars, real VU dials, a 32-band spectrum, a
-  reel-to-reel tape deck, a big tuner, a 3-octave keyboard, a coloured waterfall and more.
-- **More** opens what isn't redrawn for touch yet (Recordings, the sample editor, Sloop, FM-1, settings) as the
-  Pocket's screens, larger, in the theme's colours, with on-screen keys. Backing out returns to the tabs.
-- **Expansion cards:** a card slot with a pin map, a card ID on three pins so the box knows which card is in,
-  and the first card planned: the Pico MIDI card with five TRS jacks. See
-  [docs/studio-expansion-cards.md](docs/studio-expansion-cards.md).
-- **One codebase:** the box detects its build at start (`device.py`). The Studio's extras check what the
-  hardware can do, so they never appear on the Pocket, and `install.sh` sets up whichever build it's on.
-
-<details><summary>All eleven Studio meters</summary>
-
-![The Studio's eleven meters in a custom theme](docs/images/desk-meters.png)
-</details>
-
-| In SLOOP's Green palette | |
-|---|---|
-| ![Studio home in Green](docs/images/desk-ui-home.png) | ![Studio mixer in Green](docs/images/desk-ui-mix.png) |
-
-</details>
-
-**Parts:** Raspberry Pi 3 B+, a 3.5" 480×320 SPI touchscreen (ILI9486 display, XPT2046 touch: the common
-"3.5 inch RPi LCD"), a PiSugar 3 Plus, a 1-to-2 GPIO splitter for the card slot, and a microSD card.
-
-## What's new in v2.8
-
-| Two FM-1s in the MIDI routes | The mixer |
-|---|---|
-| ![MIDI routes with FM-1 A and FM-1 B rows and A and B columns](docs/images/screen-matrix-two.png) | ![Settings › Audio: FM-1 A level 100%, FM-1 B level 80%, USB keys level 175%](docs/images/screen-settings-mixer.png) |
-
-**New**
-- **Two FM-1s at once:** plug a second FM-1 into the USB hub and both play. They're **FM-1 A** and
-  **FM-1 B** by the hub port they're on (the lower port is A), so they keep their names across reboots and
-  replugs. The home screen shows "SLOOP 2.8 + B".
-- **FM-1 B in the MIDI routes:** while it's plugged in, the routes get an *FM-1 B* row and a *B* column with
-  all the usual options. At first Bluetooth, USB keyboards and the box's clock play both FM-1s together;
-  split them by switching routes off, for example the SMK-37 on A and Bluetooth on B.
-- **An audio mixer:** with more than one sound source, each gets its own level, 0–200%: FM-1 A, FM-1 B and
-  a USB keyboard's own synth (an SMK-37 running Baud Girl, say). They're added together before Bluetooth,
-  and recordings and the meters hear the whole mix. Settings › Audio on the box, the Mixer sliders in the
-  web app.
-- **Sloop jobs pick their FM-1:** with two plugged in, Settings › Sloop › **FM-1** chooses which one
-  backups, restores and loads go to. Firmware installs ask you to unplug the other one first.
-- **Faster:** the box now keeps one connection to the audio system open instead of opening a new one
-  every few seconds. Each of those cost the Pi Zero 1–2 seconds of CPU, which made playing lag and the
-  controls slow with three sound sources. Audio now takes about half the CPU it did.
-
-**New in v2.8.1: Record parts**
-- **Each source on its own, plus the mix:** turn on Settings › Audio › **Record parts** and every take also
-  keeps FM-1 A, FM-1 B and a USB keyboard's synth as files of their own (`…_fm1-a.wav`, `…_fm1-b.wav`,
-  `…_fm1-usb0.wav`), at full level, next to the mix. Ready for samples, or for mixing again on a computer.
-- **One recorder for everything:** all the sources go into one many-channel recording, and the box splits
-  it into the parts and adds up the mix at your mixer levels after Stop. So the parts and the mix line up to
-  the sample, the mix no longer needs the speaker connected, and the Pi stays smooth while recording (a
-  recorder for each source maxed its CPU out).
-- **In Recordings, a take shows once:** **Parts ›** plays a part or opens it in the sample editor, and
-  Delete removes the take with its parts. The web app lists the parts under each take, with a player,
-  Download and Edit. Clipping is checked on each part, so a warning names the source that clipped.
-- Off at first: a take with parts uses about four times the SD card space.
-
-**Fixed**
-- Turning BLE MIDI off no longer silences USB keyboards (it was meant for Bluetooth only).
-- With no FM-1 plugged in, a USB keyboard's own sound is never taken for the FM-1's.
-- A second FM-1's sound warbled and crackled: re-timing it to the first FM-1's clock now has the slack it
-  needs.
-
-**Good to know:** two USB devices never tick at exactly the same speed, so FM-1 A keeps the clock and the
-others are re-timed to it, out of earshot. The Audio rate is best left at 48 kHz (the default): it's what
-Bluetooth speakers run at, and 44.1 kHz costs the Pi an extra conversion.
-
-<details><summary>Earlier: v2.7</summary>
-
-USB MIDI keyboards and controllers through a USB hub (up to four, found by themselves), a *USB keys* row
-and *USB* column in the MIDI routes, the keyboard named on the home screen, Settings › MIDI › USB keys and the
-web app; the installer sets the Pi's USB to full speed so a hub works. With the FM-1 on the hub, it can be
-unplugged and plugged back in without a reboot (v2.7.1).
-
-| A USB keyboard playing the FM-1 | Settings › MIDI |
-|---|---|
-| ![The home screen: MIDI SMK-37+VA](docs/images/screen-status.png) | ![Settings › MIDI: USB keys 1](docs/images/screen-settings-midi.png) |
-</details>
-
-<details><summary>Earlier: v2.6</summary>
-
-Runs on a [PiSugar 3](https://docs.pisugar.com/docs/product-wiki/battery/pisugar3/pisugar-3-series)
-battery, with its charge in the title bar and the web app, a warning at 15% and a safe shutdown at 5%; a new
-demo video; recordings warn when the FM-1 clipped (v2.6.2).
-
-| On battery | Plugged in |
-|---|---|
-| ![The box on battery: the gauge in the title bar reads 70](docs/images/device-battery.jpg) | ![Charging: a bolt in the battery](docs/images/screen-status-charging.png) |
-</details>
-
-<details><summary>Earlier: v2.5</summary>
-
-A sample editor on the box and in the web app: start from a recording or a sample, set the start and end,
-fades, normalize, reverse and the root note (found by listening), play it, and save it as a new sample with
-its note in the name, ready for Sloop › Load sample. Recordings no longer go straight into a slot.
-</details>
-
-<details><summary>Earlier: v2.4</summary>
-
-Settings in sections (Playing, Audio, MIDI, Recordings, Wi-Fi, Sloop, FM-1), a bigger web app (live status
-and controls, the MIDI matrix with named presets, recordings in the browser), the Sample level setting, a
-big volume bar with 2% steps, faster hold-repeat, the home screen naming the firmware (SLOOP 2.8) and the
-keyboard, recordings that keep all their audio, and sample loads that convert in about half the time.
-</details>
-
-<details><summary>Earlier: v2.3</summary>
-
-Six more meters (Tuner, MIDI, Waterfall, Stereo, History, Beat), the Recordings menu (play a take, resample
-it into a slot, delete), a metronome, arp and chord memory with one-press switches, route presets, controls
-that react at once (screens redraw in about 8 ms), a Bluetooth MIDI keyboard that reconnects by itself after
-the Companion restarts, and a steadier external clock.
-</details>
-
-<details><summary>Earlier: v2.2</summary>
-
-Recording to WAV from any meter screen (REC on the screen; stops safely; recordings on the web page), the
-Tape meter, MIDI clock (follow or box clock, tap tempo, hold for Start/Stop), the MIDI matrix (per route:
-channels, transpose, velocity, drop clock/aftertouch/bend; note-offs always follow their note-ons), and the
-Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
-</details>
+It's ready about a minute after power-on.
 
 ## Screens
 
-The same jobs on both boxes: the Pocket's 1.3" OLED with its joystick, and the Studio's 3.5" touchscreen in
-SLOOP's style and FM-1 A's colours. Every image is drawn by the Companion's own code (`tools/render_screens.py`).
+The same jobs on both boxes. Every image is drawn by the Companion's own code (`tools/render_screens.py`).
 
 | | The Pocket | The Studio |
 |---|---|---|
@@ -295,80 +124,127 @@ SLOOP's style and FM-1 A's colours. Every image is drawn by the Companion's own 
 ![The Studio's eleven meters](docs/images/desk-meters.png)
 </details>
 
-## Getting started
+## What's new
 
-Everything is in [`fm1-bt-bridge/`](fm1-bt-bridge/). Its [README](fm1-bt-bridge/README.md)
-covers what to buy, flashing the SD card, installing, the controls and troubleshooting. In short:
+### Studio v1.2
 
-```
-scp -r fm1-bt-bridge YOUR_USER@fm1bridge.local:~
-ssh YOUR_USER@fm1bridge.local
-bash fm1-bt-bridge/install.sh
-sudo reboot
-```
-
-## Repository
-
-| Path | What it is |
+| The sample editor, by touch | Every screen the Studio's own |
 |---|---|
-| `fm1-bt-bridge/bridge.py` | The OLED app: status and settings screens, headphone pairing, audio routing and the mixer (PipeWire), keys |
-| `fm1-bt-bridge/blemidi.py` | The Bluetooth LE MIDI service (BlueZ), its link to the FM-1's USB MIDI and to USB keyboards, the clock, the MIDI matrix with its arp and chord memory, and the metronome, in a process of its own |
-| `fm1-bt-bridge/libui.py` | The Sloop and FM-1 settings, recordings and their screens on the box |
-| `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
-| `fm1-bt-bridge/midiui.py` | The MIDI matrix screens on the box |
-| `fm1-bt-bridge/sampleui.py` | The sample editor's screen on the box |
-| `fm1-bt-bridge/battery.py` | The PiSugar 3 battery's charge, read over I2C |
-| `fm1-bt-bridge/device.py` | Which build a box is (the Pocket or the Studio) and what its hardware can do |
-| `fm1-bt-bridge/deskui.py` | The Studio's touch screens: the tabs, HOME, MIX, MIDI, METER, MORE |
-| `fm1-bt-bridge/deskmeters.py` | The eleven meters drawn for the Studio's screen |
-| `fm1-bt-bridge/deskpages.py` | The Studio's pages: settings, lists, confirmations, jobs, a route's details |
-| `fm1-bt-bridge/netmidi.py` | Network MIDI (RTP-MIDI) and the Mackie Control surface, for a DAW (the Studio) |
-| `fm1-bt-bridge/desk.py` | The Studio's touchscreen and touch input (the kernel's framebuffer and touch device) |
-| `fm1-bt-bridge/sloopstyle.py` | SLOOP's palettes, track colours, font and themes, for the Studio |
-| `fm1-bt-bridge/vendor/fonts/` | Terminus, SLOOP's pixel font (SIL Open Font License, credited in `VENDORED.md`) |
-| `fm1-bt-bridge/sampler.py` | The sample editor's sums (trim, fades, normalize, reverse, the note), shared by the box and the web page |
-| `fm1-bt-bridge/metronome.py` | The metronome's click stream (run by the MIDI process) |
-| `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
-| `fm1-bt-bridge/sloop.py` | SLOOP's editor protocol over USB MIDI: backups, projects, sample slots; which FM-1 is A and which is B |
-| `fm1-bt-bridge/samplefast.py` | SLOOP's sample converter made faster, with the same output byte for byte |
-| `fm1-bt-bridge/web.py` | The web app (http://fm1bridge.local while Wi-Fi is on) |
-| `fm1-bt-bridge/weblink.py` | How the box and the web app talk: the box's status out, the page's commands in |
-| `fm1-bt-bridge/vendor/sloop/` | SLOOP's firmware installer and sample converter, copied unchanged (GPL-3.0, credited in `VENDORED.md`) |
-| `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot services on the Pi |
-| `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd, swap, Wi-Fi and SD-card helper configuration |
-| `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for the library, the screens, the meters, recording and playback, MIDI, the clock, the metronome and the web page (`python tests/test_library.py` etc.; needs mido, Pillow and numpy) |
-| `tools/midi_timing.py` | Analyses the Companion's Bluetooth MIDI timing log (`/dev/shm/fm1-midi-timing.log` on the Pi) |
-| `tools/render_screens.py` | Draws the OLED screens as PNG files for this README, without a Pi |
-| `docs/studio-expansion-cards.md` | The Studio's card slot: pins, card ID, the MIDI card |
-| `docs/midi-jacks-build-plan.md` | Building the TRS MIDI jacks (the Pico MIDI card's circuit) |
-| `docs/images/` | The photo and screen images |
+| ![The Studio's sample editor: the take full width, start and end markers to drag, zoom, fades, normalize, reverse, the note, play and save](docs/images/desk-ui-editor-theme.png) | ![A restore on the Studio, held to confirm: the button fills as it's held](docs/images/desk-page-confirm.png) |
+
+- **Every screen drawn for touch.** Settings, lists (recordings, samples, backups, firmware), route details,
+  route presets, the speaker scan, job progress and playback each have a page of their own, with a back button.
+- **Hold to confirm:** anything that writes to the FM-1 (a restore, a firmware install) asks you to hold a button
+  for 2 seconds.
+- **The sample editor, by touch:** drag the start and end markers, zoom in around the selection, fade, normalize,
+  reverse, set the note, play and save.
+- **MORE** gains Wi-Fi and **Shut down**, since the Studio has no power key.
+
+**Connecting a DAW:** on the computer, open network MIDI (Mac: Audio MIDI Setup › MIDI Studio › Network;
+Windows: the free rtpMIDI driver) and connect a session to each of the Studio's two ports. In Kraken, set the
+port connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl as a control surface on that port.
+
+### Pocket v2.8
+
+| Two FM-1s in the MIDI routes | The mixer |
+|---|---|
+| ![MIDI routes with FM-1 A and FM-1 B rows and A and B columns](docs/images/screen-matrix-two.png) | ![Settings › Audio: FM-1 A level 100%, FM-1 B level 80%, USB keys level 175%](docs/images/screen-settings-mixer.png) |
+
+- **Two FM-1s at once,** named A and B by their hub port, each with its own row and column in the MIDI routes.
+- **An audio mixer:** each sound source at its own level, 0–200%, added up before Bluetooth.
+- **Record parts (v2.8.1):** each source as its own file next to the mix, from one recording, so they line up to
+  the sample.
+- **Faster:** one connection to the audio system kept open, about half the CPU it took before.
+
+<details><summary>Release history</summary>
+
+**Studio**
+- **v1.1:** network MIDI (RTP-MIDI) with a music port and a Mackie Control port; the DAW tab for Kraken and
+  Ableton Live; every USB audio device on its own named mixer channel, with an input pair for multichannel
+  interfaces.
+- **v1.0:** the Studio's first release: tabs along the bottom, SLOOP's font, palettes and track colours,
+  following FM-1 A's colour theme, all eleven meters redrawn in colour, the card slot's pin map and card ID
+  ([docs/studio-expansion-cards.md](docs/studio-expansion-cards.md)).
+
+**Pocket**
+- **v2.8.2:** a long USB device name in Settings › Audio no longer runs into its level on the OLED.
+- **v2.8:** two FM-1s, the mixer, a much lighter audio connection. **v2.8.1:** Record parts.
+- **v2.7:** USB MIDI keyboards through a hub, found by themselves; the FM-1 can be replugged on the hub without a
+  reboot (v2.7.1).
+- **v2.6:** PiSugar 3 battery support (charge on screen, a warning at 15%, a safe shutdown at 5%); a new demo
+  video; a warning when a recording clipped (v2.6.2).
+- **v2.5:** the sample editor, on the box and in the web app.
+- **v2.4:** settings in sections, a bigger web app, route presets by name, faster sample loads.
+- **v2.3:** six more meters, the Recordings menu, metronome, arp and chord memory, faster screens.
+- **v2.2:** recording to WAV, the Tape meter, MIDI clock and the MIDI matrix.
+</details>
+
+## Tested with
+
+A Pi Zero W on Raspberry Pi OS Lite (Trixie); SLOOP 2.7 and 2.8; a JBL Go 3; an M-VAVE SMK-37 over Bluetooth MIDI
+and over USB through an ASMedia ASM1074 hub; two FM-1s together on that hub with the SMK-37 running Baud Girl.
+The library was tested on a real FM-1: a backup, a restore (read back byte for byte), a project load, a sample load
+and the update from SLOOP 2.7.1 to 2.8. The meters take about a quarter of the Pi Zero's CPU, with no audio
+dropouts. The Studio's software is tested on a computer; testing on its hardware starts in October 2026.
 
 ## Known limits
 
-- **Bluetooth audio delay:** about 150–250 ms (SBC). Fine for listening and practising; you'll
-  notice it when playing tightly in time.
-- **On battery, the FM-1 runs (and charges) from it too.** The Pi Zero's USB port gives the FM-1 power
-  that software can't switch off, so a PiSugar 3 lasts far less with the FM-1 plugged in. Charge the FM-1
-  first; cutting its power on battery needs a small hardware switch, still being tested.
-- **Recordings clip if the FM-1 sends USB at full level** with several tracks playing: it clips inside the
-  FM-1, before the box gets the sound. The box warns you after the take; set the FM-1's USB audio to
-  master with the knob around half (or lower its track levels) for clean takes.
-- **Plugging the FM-1 straight into the box while the Pi is running can reboot the Pi.** The Zero's USB
-  port has no current limit. Connect the FM-1 first, or put a USB hub in between: unplugging the FM-1 from
-  the hub and plugging it back in doesn't reboot the box (plugging the hub itself into the box may still).
-- **With two FM-1s (or a keyboard's synth), recordings need the speaker connected** to hear the whole mix;
-  without one they record FM-1 A. With Record parts on (v2.8.1) the mix is made from the parts and needs no
-  speaker. Firmware installs wait until only one FM-1 is plugged in.
-- **USB runs at 12 Mbit/s** so a hub works on the Pi Zero. Fine for MIDI and the FM-1's audio, but a
-  USB 2 device that needs high speed (a fast USB stick, say) is slower behind it.
-- **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send
-  each note in its own packet.
-- **Start-up still takes about a minute** on a Pi Zero W's single core; Wi-Fi comes up about 40 s
-  after the Companion. The optional `config/fm1-native-wifi` step (see the
-  [box README](fm1-bt-bridge/README.md)) saves NetworkManager about a minute more.
+- **Bluetooth audio delay:** about 150–250 ms (SBC). Fine for listening and practising; you'll notice it when
+  playing tightly in time.
+- **Recordings clip if the FM-1 sends USB at full level** with several tracks playing (inside the FM-1, before the
+  box hears it). The box warns you; set the FM-1's USB audio to master with the knob around half.
+- **Chords over Bluetooth MIDI arrive slightly rolled** (10–50 ms) with keyboards that send each note in its own
+  packet.
+- **The Pocket only:**
+  - **On battery, the FM-1 runs and charges from it too:** the Pi Zero's USB port can't switch its power off, so
+    the battery lasts far less with the FM-1 plugged in. A small hardware switch is being tested.
+  - **Plugging the FM-1 straight in while the Pi runs can reboot it** (the port has no current limit). Connect
+    the FM-1 first, or use a USB hub: replugging the FM-1 on the hub is fine.
+  - **USB runs at 12 Mbit/s** so a hub works on the Pi Zero: fine for MIDI and the FM-1's audio, slow for a fast
+    USB stick.
+  - **Start-up takes about a minute** on the Zero's single core; Wi-Fi comes up about 40 s later (the optional
+    `config/fm1-native-wifi` step in the [box README](fm1-bt-bridge/README.md) saves about a minute more).
+- **With two FM-1s (or a keyboard's synth), plain recordings need the speaker connected** to hear the whole mix;
+  with Record parts on, the mix is made from the parts and needs none. Firmware installs wait until only one FM-1
+  is plugged in.
+
+<details><summary>What's in the repository</summary>
+
+| Path | What it is |
+|---|---|
+| `fm1-bt-bridge/bridge.py` | The app: screens, headphone pairing, audio routing and the mixer (PipeWire), keys |
+| `fm1-bt-bridge/blemidi.py` | Bluetooth LE MIDI (BlueZ), the FM-1's USB MIDI and USB keyboards, the clock, the MIDI matrix with its arp and chord memory, the metronome, in a process of its own |
+| `fm1-bt-bridge/libui.py` | The Sloop and FM-1 settings, recordings and their screens |
+| `fm1-bt-bridge/meters.py` | The eleven meters, recording and playback, pitch detection |
+| `fm1-bt-bridge/midiui.py` | The MIDI matrix screens |
+| `fm1-bt-bridge/sampleui.py` | The sample editor's screen on the Pocket |
+| `fm1-bt-bridge/battery.py` | The PiSugar battery's charge, read over I2C |
+| `fm1-bt-bridge/device.py` | Which build a box is and what its hardware can do |
+| `fm1-bt-bridge/deskui.py` | The Studio's touch screens and tabs |
+| `fm1-bt-bridge/deskmeters.py` | The eleven meters drawn for the Studio |
+| `fm1-bt-bridge/deskpages.py` | The Studio's pages: settings, lists, confirmations, jobs, a route's details |
+| `fm1-bt-bridge/desk.py` | The Studio's touchscreen and touch input |
+| `fm1-bt-bridge/netmidi.py` | Network MIDI (RTP-MIDI) and the Mackie Control surface (the Studio) |
+| `fm1-bt-bridge/sloopstyle.py` | SLOOP's palettes, track colours, font and themes (the Studio) |
+| `fm1-bt-bridge/sampler.py` | The sample editor's sums, shared by the box and the web page |
+| `fm1-bt-bridge/metronome.py` | The metronome's click stream |
+| `fm1-bt-bridge/library.py` | The library's jobs (backup, restore, projects, samples, firmware); also a command-line tool |
+| `fm1-bt-bridge/sloop.py` | SLOOP's editor protocol over USB MIDI; which FM-1 is A and which is B |
+| `fm1-bt-bridge/samplefast.py` | SLOOP's sample converter made faster, byte for byte the same |
+| `fm1-bt-bridge/web.py` | The web app at http://fm1bridge.local |
+| `fm1-bt-bridge/weblink.py` | How the box and the web app talk |
+| `fm1-bt-bridge/vendor/` | SLOOP's firmware installer and sample converter (GPL-3.0) and the Terminus font (SIL OFL), unchanged and credited in `VENDORED.md` |
+| `fm1-bt-bridge/install.sh` | Installs packages, configuration and the boot services |
+| `fm1-bt-bridge/config/` | PipeWire, WirePlumber, polkit, systemd, swap, Wi-Fi, network MIDI and SD-card configuration |
+| `tests/` | A pretend FM-1 speaking SLOOP's protocol, and tests for everything else (`python tests/test_library.py` etc.; needs mido, Pillow and numpy) |
+| `tools/render_screens.py` | Draws the screens as PNG files for this README, without a Pi |
+| `tools/midi_timing.py` | Analyses the Bluetooth MIDI timing log |
+| `docs/` | The Studio's expansion cards, the TRS MIDI jacks' build plan, and the images |
+</details>
 
 ## License
 
-GPL-3.0, like Sloop. See [LICENSE](LICENSE).
+GPL-3.0, like SLOOP. See [LICENSE](LICENSE).
 
-The Studio's palettes and track colours are SLOOP's (isod89/sloop-fm1, GPL-3.0), and its font is Terminus by Dimitar Toshkov Zhekov (SIL Open Font License 1.1), as SLOOP ships it.
+The Studio's palettes and track colours are SLOOP's (isod89/sloop-fm1, GPL-3.0), and its font is Terminus by
+Dimitar Toshkov Zhekov (SIL Open Font License 1.1), as SLOOP ships it.
