@@ -7,11 +7,10 @@ editor, eleven meters and a MIDI matrix, with no computer needed. By [XOXO Audio
 · [The Studio](https://xoxoaudiolabs.com/products/fm1-companion-studio/) ·
 [Try the web app](https://xoxoaudiolabs.com/app/) (sample data, in your browser)
 
-[![The demo video: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)
-
-**[▶ Watch the demo](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)**
-(1:46, with sound): the box's own screens, all eleven meters, the settings, the MIDI matrix and the sample
-editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box.
+| The Studio | The Pocket |
+|---|---|
+| [![The Studio tour: its touch screens, the sampler, the sequencer, the meters, with each tap shown](docs/images/studio-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-studio-v1.3.mp4) | [![The Pocket demo: the box's screens and meters, with the button presses shown](docs/images/demo-preview.gif)](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4) |
+| **[▶ Watch the Studio tour](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-studio-v1.3.mp4)** (1:12, with sound): HOME, the mixer with cue, ten meters, the sampler, SLOOP's sequencer and FX, the recorder, MIDI and MORE, with each tap shown. Two FM-1s and an SMK-37 played by Claude over MIDI, recorded by the Studio. | **[▶ Watch the Pocket demo](https://cdn.jsdelivr.net/gh/xoxoaudiolabs/FM-1-Companion@main/docs/video/fm1-companion-demo-v2.6.1.mp4)** (1:46, with sound): the box's own screens, all eleven meters, the settings, the MIDI matrix and the sample editor, with an overlay of each button press. The music was played on the FM-1 and recorded by the box. |
 
 <img src="docs/images/device-with-fm1.jpg" width="560" alt="The Pocket on its PiSugar battery, cabled to the FM-1 running SLOOP">
 
