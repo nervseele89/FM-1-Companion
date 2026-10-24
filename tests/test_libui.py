@@ -616,7 +616,7 @@ def test_mixer():
     assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]      # one source: no mixer
     app.others = others
     rows = app.settings_rows()
-    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_u-smk37va", "SMK-37+VA level"),
+    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_u-smk37va", "SMK-37+VA"),
                                          ("rec_parts", "Record parts")]
     app.source_b = source_b
     assert [r[0] for r in app.settings_rows()[3:]] == ["mix_a", "mix_b", "mix_u-smk37va", "rec_parts"]

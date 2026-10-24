@@ -153,10 +153,13 @@ def test_touch_screens():
     tap((cell[0][0] + cell[0][2]) // 2, (cell[0][1] + cell[0][3]) // 2)
     assert app.routes()["BT>USB"]["on"] is True                      # off at first: tapped on
     tap((cell[0][0] + cell[0][2]) // 2, (cell[0][1] + cell[0][3]) // 2, hold=0.8)
-    assert ui.classic and app.screen == "route" and app.route_key == "BT>USB"   # held: its settings
-    ui.classic, app.screen = False, "status"
+    assert app.screen == "route" and app.route_key == "BT>USB"            # held: its settings, a Studio page
+    ui.render(now, force=True)
+    assert not ui.classic and any(w[3] == "page-back" for w in ui.widgets)
+    app.screen = "status"
+    ui.render(now, force=True)
     tab("MORE")                                                       # then THEME round to AMBER
-    ui.more_top = 3
+    ui.more_top = 5                                                    # scrolled to the end of MORE
     ui.render(now, force=True)
     row = next(w for w in ui.widgets if w[3] == ("more", "THEME"))
     tap(row[0][0] + 20, row[0][1] + 10)
@@ -205,6 +208,50 @@ def test_every_meter_draws():
             for k in range(3):
                 dm.draw(App(i, x), img, (0, 35, 480, 275), sloopstyle.Theme("AMBER"), 1.0 + k * 0.1)
     assert dm.tune is None                                            # silence: no note
+
+
+def test_native_pages():
+    """no Pocket screens on the Studio: a settings section, a value with - / +, a confirmation held, back"""
+    import bridge
+    import deskui
+    app = bridge.App(RgbCapture(), dict(bridge.DEFAULTS))
+    app.save_settings = lambda: None
+    ui = deskui.DeskUI(app, app.display)
+    ui.theme_check = 1e12
+
+    def press(key, now=0.0, hold=0.0):
+        box = next(w[0] for w in ui.widgets if w[3] == key)
+        ui.touch("down", box[0] + 4, box[1] + 4, now)
+        if hold:
+            ui.render(now + hold, force=True)                          # still held: the confirm fires
+        else:
+            ui.touch("up", box[0] + 4, box[1] + 4, now)
+        ui.render(now + hold, force=True)
+    ui.open_tab("MORE")
+    ui.render(0.0, force=True)
+    press(("more", "PLAYING"))
+    assert app.screen == "settings" and app.settings_menu == "play"
+    rows = [r[0] for r in app.settings_rows()]
+    press(("row", rows.index("tempo")))                                # tempo: being edited, - / + on its row
+    assert app.editing == "tempo"
+    bpm = app.state["bpm"]
+    press(("plus", rows.index("tempo")))
+    press(("plus", rows.index("tempo")))
+    assert app.state["bpm"] == bpm + 2
+    press(("row", rows.index("tempo")))                                # tapped again: done
+    assert app.editing is None
+    press("page-back")                                                 # out of the section: MORE again
+    assert app.screen == "status" and ui.tab == "MORE"
+    ui.more_top = 5
+    ui.render(0.0, force=True)
+    done = []
+    app.shutdown = lambda: done.append(True)
+    press(("more", "SHUT DOWN"))
+    assert app.screen == "confirm"
+    press("confirm", now=10.0, hold=0.5)                               # let go too soon: nothing
+    assert not done
+    press("confirm", now=20.0, hold=2.1)                               # held 2 s: confirmed
+    assert done
 
 
 def test_daw_surface():

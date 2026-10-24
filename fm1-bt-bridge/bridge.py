@@ -1076,7 +1076,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                     ("chord_on", "Chord", onoff(keys["chord_on"])), ("click", "Click level", self.state["click"])]
         if self.settings_menu == "audio":
             channels = self.mix_channels()
-            mix = [(f"mix_{k}", f"{self.channel_name(k, n)} level",
+            names = {k: self.channel_name(k, n) for k, n in channels}   # a long device name: no room for "level"
+            mix = [(f"mix_{k}", names[k] if len(names[k]) > 6 else f"{names[k]} level",
                     ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
                    for k, n in channels] if len(channels) > 1 else []
             parts = [("rec_parts", "Record parts", onoff(self.state["rec_parts"]))] if mix else []
@@ -1335,12 +1336,9 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
 
     def render(self, force=False):
         now = time.monotonic()
-        if self.desk:                         # the desk box: its own screens, the classic ones under MORE
-            if self.desk.classic and self.screen == "status":
-                self.desk.classic, self.shown = False, None       # backed out of a classic screen: home again
-            if not self.desk.classic:
-                self.desk.render(now, force)
-                return
+        if self.desk:                         # the Studio draws every screen itself (deskui, deskpages)
+            self.desk.render(now, force)
+            return
         view = self.view(now)
         if view == self.shown and not force:
             return

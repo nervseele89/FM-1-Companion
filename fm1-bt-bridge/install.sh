@@ -89,6 +89,7 @@ install -D -m 644 "$DIR/device.py"                              ~/.local/share/f
 install -D -m 644 "$DIR/desk.py"                                ~/.local/share/fm1-bridge/desk.py
 install -D -m 644 "$DIR/deskui.py"                              ~/.local/share/fm1-bridge/deskui.py
 install -D -m 644 "$DIR/deskmeters.py"                          ~/.local/share/fm1-bridge/deskmeters.py
+install -D -m 644 "$DIR/deskpages.py"                           ~/.local/share/fm1-bridge/deskpages.py
 install -D -m 644 "$DIR/netmidi.py"                             ~/.local/share/fm1-bridge/netmidi.py
 install -D -m 644 "$DIR/sloopstyle.py"                          ~/.local/share/fm1-bridge/sloopstyle.py
 install -D -m 644 "$DIR/weblink.py"                             ~/.local/share/fm1-bridge/weblink.py

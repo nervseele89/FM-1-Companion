@@ -57,15 +57,33 @@ tested on the real FM-1 with a backup, a restore (read back byte for byte), a pr
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
-## The Studio: Studio v1.1
+## The Studio: Studio v1.2
+
+| The sample editor, by touch | Every screen the Studio's own |
+|---|---|
+| ![The Studio's sample editor: the take full width, start and end markers to drag, zoom, fades, normalize, reverse, the note, play and save](docs/images/desk-ui-editor-theme.png) | ![A restore on the Studio, held to confirm: the button fills as it's held](docs/images/desk-page-confirm.png) |
+
+> **Hardware testing starts 10/24/2026.** The Studio's releases so far (v1.0 and v1.1 tagged desk-v1.0 and
+> desk-v1.1, from before the rename) are software built and tested on a computer; the Pi 3, the screen and the
+> PiSugar 3 Plus arrive that day.
+
+**New in Studio v1.2**
+- **No more Pocket screens on the Studio.** Everything has a page of its own, drawn for touch: settings
+  sections and lists (recordings, samples, backups, firmware) as big rows you tap, numbers with - / + on their
+  row, route details, the channel table, route presets and the speaker scan, a progress screen for jobs, and a
+  take playing. Each has a back button.
+- **Hold to confirm:** anything that writes to the FM-1 (a restore, a firmware install) asks you to hold a
+  button for 2 seconds; it fills as you hold, and Cancel is underneath.
+- **The sample editor, by touch:** the take full width, the start and end markers dragged with a finger (the
+  nearer one follows it), zoom in around the selection, fades with - / +, normalize, reverse, the note, play
+  and save.
+- **MORE** gains Wi-Fi and **Shut down** (held to confirm), since the Studio has no power key.
+
+<details><summary>Studio v1.1: a DAW over network MIDI, any USB audio device</summary>
 
 | Kraken or Ableton from the box | Any USB audio, each on its own slider |
 |---|---|
 | ![The DAW tab: eight faders with track names, levels, meters, pan, solo and mute, and the transport](docs/images/desk-ui-daw-theme.png) | ![The mixer with FM-1 A and B, an SMK-37, an 8-channel EP-136 on inputs 3-4, a USB mic and the speaker](docs/images/desk-ui-usb-theme.png) |
-
-> **Hardware testing starts 10/24/2026.** Studio v1.0 and v1.1 (tagged desk-v1.0 and desk-v1.1, from before
-> the rename) are software built and tested on a computer; the Pi 3, the screen and the PiSugar 3 Plus arrive
-> that day.
 
 **New in Studio v1.1**
 - **Plays with a DAW over the network:** the Studio is a network MIDI device (RTP-MIDI, as macOS's Network
@@ -87,6 +105,8 @@ music playing: about a quarter of the CPU while shown, and no audio dropouts.
 **Connecting a DAW:** on the computer, open network MIDI (Mac: Audio MIDI Setup › MIDI Studio › Network;
 Windows: the free rtpMIDI driver) and connect a session to each of the box's two. In Kraken, set the port
 connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl as a control surface on that port.
+
+</details>
 
 <details><summary>Studio v1.0: the Studio's first release</summary>
 
@@ -237,52 +257,43 @@ Audio rate setting (v2.1.1) that also restarts a silent FM-1 audio stream.
 
 ## Screens
 
-| | |
-|---|---|
-| ![Status screen](docs/images/screen-status.png) | ![Recording](docs/images/screen-status-rec.png) |
-| **Status:** the FM-1 input, the speaker, the MIDI device (the dot blinks with MIDI traffic), the volume and the clock. LIVE means audio is flowing; the battery's charge is next to it. | **Recording:** REC and the time in place of LIVE. |
-| ![Settings](docs/images/screen-settings.png) | ![Playing](docs/images/screen-settings-play.png) |
-| **Settings** (joystick right): Playing, Audio, MIDI, Recordings, Sample editor, Wi-Fi, Sloop and FM-1. Press opens a section, left goes back. | **Playing ›:** Metronome, Tempo, Clock, Arp, Chord and the click level. **Audio ›** has the speaker and the audio rate; **MIDI ›** is below. |
-| ![Sloop](docs/images/screen-settings-sloop.png) | ![FM-1](docs/images/screen-settings-fm1.png) |
-| **Sloop ›:** back up, restore, load a project or a sample, the sample level, auto backup, the SD card. Writes ask you to hold the joystick press for 2 seconds; restores and project loads back up first. | **FM-1 ›:** what the FM-1 runs, and installing firmware (SLOOP and Clipper download from GitHub with Wi-Fi on). |
-| ![MIDI](docs/images/screen-settings-midi.png) | ![MIDI routes](docs/images/screen-matrix.png) |
-| **MIDI ›:** Bluetooth MIDI, pairing, the USB keyboards plugged in (press lists them), the routes and their presets. | **MIDI routes:** rows are sources (Bluetooth, USB keyboards, the FM-1, the box's clock), columns destinations; a filled square is a route that's on. Press opens it. |
-| ![Two FM-1s](docs/images/screen-matrix-two.png) | ![The mixer](docs/images/screen-settings-mixer.png) |
-| **Two FM-1s:** FM-1 B's row and column (A and B) appear while it's plugged in. Here the SMK-37 plays A and Bluetooth plays B. | **The mixer** (Settings › Audio, with more than one sound source): a level for each FM-1 and a USB keyboard's own synth, up to 200%. |
-| ![A route](docs/images/screen-route.png) | ![Volume](docs/images/screen-status-volume.png) |
-| **A route:** here the keyboard is played an octave up with a soft velocity curve. | **Volume:** up/down on the home screen, in 2% steps, shown big for a moment. |
-| ![Firmware install](docs/images/screen-job.png) | ![A recording](docs/images/screen-recordings.png) |
-| **A job running:** here a SLOOP update, about 2 minutes. | **A recording:** play it, edit it as a sample, or delete it. |
-| ![Playing](docs/images/screen-player.png) | ![Sample editor](docs/images/screen-editor.png) |
-| **Playing** a take on the speaker. | **Sample editor:** the selection between two markers (outside it, dotted); left/right picks the field, up/down changes it, press plays it. The length is top right. |
-| ![The note](docs/images/screen-editor-note.png) | ![Speaker list](docs/images/screen-speakers.png) |
-| **Note:** the root note it found by listening (up/down changes it). It goes into the saved file's name so SLOOP plays the sample in tune. | **Speakers and headphones** found by a scan (KEY1): pick one with the joystick. |
-| ![Pairing](docs/images/screen-pairing.png) | ![Screensaver](docs/images/screen-screensaver.png) |
-| **Pairing**, then it's remembered and reconnects by itself. | **Screensaver** after five minutes: one small word that moves, so the OLED doesn't burn in. |
-| ![Starting](docs/images/screen-starting.png) |  |
-| **Starting:** shown as soon as the Companion opens the screen at boot, until the status screen is ready. |  |
+The same jobs on both boxes: the Pocket's 1.3" OLED with its joystick, and the Studio's 3.5" touchscreen in
+SLOOP's style and FM-1 A's colours. Every image is drawn by the Companion's own code (`tools/render_screens.py`).
 
-### Meters
+| | The Pocket | The Studio |
+|---|---|---|
+| **Home:** the FM-1s, the speaker, MIDI, the volume, the clock; LIVE and the battery | ![Pocket home](docs/images/screen-status.png) | ![Studio home](docs/images/desk-ui-home-theme.png) |
+| **Mixer:** a level for each FM-1 and USB device, up to 200%, and Record parts | ![Pocket mixer](docs/images/screen-settings-mixer.png) | ![Studio mixer](docs/images/desk-ui-usb-theme.png) |
+| **MIDI routes:** sources down the side, destinations across; FM-1 B and the Studio's NET when connected | ![Pocket MIDI routes](docs/images/screen-matrix-two.png) | ![Studio MIDI routes](docs/images/desk-ui-midi-theme.png) |
+| **Meters:** eleven of them, from LED bars to a tuner, a tape deck and a waterfall | ![Pocket meter](docs/images/screen-meter-spectrum.png) | ![Studio meter](docs/images/desk-ui-meter-theme.png) |
+| **Settings:** Playing, Audio, MIDI, Recordings, Sloop, FM-1; on the Studio, values with - / + by touch | ![Pocket settings](docs/images/screen-settings-play.png) | ![Studio settings](docs/images/desk-page-settings.png) |
+| **Sample editor:** a take trimmed, faded and tuned into a sample for SLOOP; on the Studio, drag the markers | ![Pocket sample editor](docs/images/screen-editor.png) | ![Studio sample editor](docs/images/desk-ui-editor-theme.png) |
+| **DAW** (the Studio): a Mackie Control surface for Kraken or Ableton Live | | ![Studio DAW](docs/images/desk-ui-daw-theme.png) |
 
-Joystick left from the status screen. Up/down switches meter (the box remembers your choice), press
-records, right goes back. The screen stays on while sound (or MIDI) plays.
+<details><summary>More of the Pocket's screens</summary>
 
-| | |
-|---|---|
-| ![Bars](docs/images/screen-meter-bars.png) | ![VU](docs/images/screen-meter-vu.png) |
-| **Bars:** left and right peak level from −48 to 0 dBFS, with a peak hold and CLIP. | **VU:** two needles with real VU ballistics (0 VU = −18 dBFS); the dot lights on peaks. |
-| ![Spectrum](docs/images/screen-meter-spectrum.png) | ![Scope](docs/images/screen-meter-scope.png) |
-| **Spectrum:** 16 bands from 50 Hz to 7.5 kHz, with falling peak caps. | **Scope:** the waveform, held steady on a rising zero crossing. |
-| ![Tape](docs/images/screen-meter-tape.png) | ![Tuner](docs/images/screen-meter-tuner.png) |
-| **Tape:** a reel-to-reel deck, here 1 min 23 s into a recording. | **Tuner:** the note, how far off in cents, its frequency; boxed when within 5 cents. |
-| ![MIDI](docs/images/screen-meter-midi.png) | ![Waterfall](docs/images/screen-meter-waterfall.png) |
-| **MIDI:** the notes played and the chord's name; below, the busy channels. | **Waterfall:** the spectrum over the last ~5 s, newest at the top. |
-| ![Stereo](docs/images/screen-meter-stereo.png) | ![History](docs/images/screen-meter-history.png) |
-| **Stereo:** mono is a vertical line, wide stereo a cloud; correlation below. | **History:** the peak level over the last ~50 s. |
-| ![Beat](docs/images/screen-meter-beat.png) | |
-| **Beat:** the tempo and the beat in the bar, flashing in time. | |
+| | | |
+|---|---|---|
+| ![Recording](docs/images/screen-status-rec.png) | ![Volume](docs/images/screen-status-volume.png) | ![Settings](docs/images/screen-settings.png) |
+| Recording: REC and the time | Volume, in 2% steps | Settings: its sections |
+| ![Sloop](docs/images/screen-settings-sloop.png) | ![FM-1](docs/images/screen-settings-fm1.png) | ![A route](docs/images/screen-route.png) |
+| Sloop: backups, projects, samples | FM-1: firmware | A route: transpose, velocity, channels |
+| ![A recording](docs/images/screen-recordings.png) | ![The note](docs/images/screen-editor-note.png) | ![Playing](docs/images/screen-player.png) |
+| A recording: play, edit, parts, delete | The note it found by listening | A take playing |
+| ![Speakers](docs/images/screen-speakers.png) | ![Firmware install](docs/images/screen-job.png) | ![Screensaver](docs/images/screen-screensaver.png) |
+| Speakers found by a scan | A SLOOP update running | The screensaver |
+</details>
 
-The screen images are drawn by the Companion's own code (`tools/render_screens.py`).
+<details><summary>All eleven meters on each box</summary>
+
+**The Pocket** (joystick left from home; up/down changes meter, press records)
+
+![The Pocket's eleven meters](docs/images/screen-meters.png)
+
+**The Studio** (the METER tab; tap the meter for the next)
+
+![The Studio's eleven meters](docs/images/desk-meters.png)
+</details>
 
 ## Getting started
 
@@ -310,6 +321,7 @@ sudo reboot
 | `fm1-bt-bridge/device.py` | Which build a box is (the Pocket or the Studio) and what its hardware can do |
 | `fm1-bt-bridge/deskui.py` | The Studio's touch screens: the tabs, HOME, MIX, MIDI, METER, MORE |
 | `fm1-bt-bridge/deskmeters.py` | The eleven meters drawn for the Studio's screen |
+| `fm1-bt-bridge/deskpages.py` | The Studio's pages: settings, lists, confirmations, jobs, a route's details |
 | `fm1-bt-bridge/netmidi.py` | Network MIDI (RTP-MIDI) and the Mackie Control surface, for a DAW (the Studio) |
 | `fm1-bt-bridge/desk.py` | The Studio's touchscreen and touch input (the kernel's framebuffer and touch device) |
 | `fm1-bt-bridge/sloopstyle.py` | SLOOP's palettes, track colours, font and themes, for the Studio |
