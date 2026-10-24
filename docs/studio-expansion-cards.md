@@ -1,10 +1,10 @@
-# Desk box expansion cards
+# Studio expansion cards
 
-The desk box (a Raspberry Pi 3 B+ with the 3.5" touchscreen and a PiSugar 3 Plus) has a **card slot**: a
+The Studio (a Raspberry Pi 3 B+ with the 3.5" touchscreen and a PiSugar 3 Plus) has a **card slot**: a
 board you plug in to add hardware, starting with the MIDI jacks. Cards follow the rules below so any card fits
-any desk box, the touchscreen keeps working, and the box knows which card is in without being told.
+any Studio, the touchscreen keeps working, and the box knows which card is in without being told.
 
-This is the plan as of the desk box's first build. The box doesn't read the card ID yet; that comes with the
+This is the plan as of the Studio's first build. The box doesn't read the card ID yet; that comes with the
 first card.
 
 ## The slot
@@ -61,7 +61,7 @@ ground. A pin tied to ground counts as 1:
 
 Tie a pin to ground with a plain wire, or a 1 kΩ resistor to be gentle with it. At start-up the box reads the
 ID and switches that card's features on: the MIDI card adds its jacks to the MIDI routes and the MIDI jacks
-settings page. It joins the "can" list the desk box already uses for features its hardware allows (see
+settings page. It joins the "can" list the Studio already uses for features its hardware allows (see
 `fm1-bt-bridge/device.py`).
 
 ## Size
