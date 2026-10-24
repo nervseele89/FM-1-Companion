@@ -625,7 +625,8 @@ class UsbControllers:
 
 # ---------------------------------------------------------------- the MIDI matrix
 
-SOURCES, DESTINATIONS = ("BT", "USB", "FM-1", "FM-1 B", "Box"), ("FM-1", "FM-1 B", "BT", "USB")
+SOURCES, DESTINATIONS = ("BT", "USB", "NET", "FM-1", "FM-1 B", "Box"), ("FM-1", "FM-1 B", "BT", "USB", "NET")
+# NET: network MIDI (netmidi.py: a DAW on a computer, such as Kraken), on the desk box
 FM1S = ("FM-1", "FM-1 B")               # FM-1 A (the only one, usually) and a second FM-1 on the hub
 ROUTES = tuple(f"{s}>{d}" for s in SOURCES for d in DESTINATIONS if s != d)    # "Box": its clock, Start/Stop
 DEFAULT_ROUTE = {"on": True, "channels": "same", "transpose": 0, "velocity": "normal", "fixed": 100,
@@ -640,7 +641,8 @@ ARP_RATES = {"1/4": 24, "1/8": 12, "1/8T": 8, "1/16": 6}  # clock ticks (24 a qu
 
 
 # USB controllers play the FM-1, and both FM-1s play together; the rest is a choice
-OFF_AT_FIRST = ("USB>BT", "FM-1>USB", "BT>USB", "Box>USB", "FM-1>FM-1 B", "FM-1 B>FM-1", "FM-1 B>BT", "FM-1 B>USB")
+OFF_AT_FIRST = ("USB>BT", "FM-1>USB", "BT>USB", "Box>USB", "FM-1>FM-1 B", "FM-1 B>FM-1", "FM-1 B>BT", "FM-1 B>USB",
+                "USB>NET", "BT>NET", "NET>BT", "NET>USB", "Box>NET", "FM-1 B>NET")   # a DAW plays both FM-1s
 
 
 def route_default(key):
@@ -883,8 +885,14 @@ class MidiBridge:
     """Joins the FM-1's USB MIDI and the BLE MIDI service. Status for the screen:
     usb_label(), peer, enabled, pairing_until, activity()."""
 
-    def __init__(self, source_match, enabled=True):
+    def __init__(self, source_match, enabled=True, net=False):
         self.enabled, self.paused = enabled, False
+        self.net = self.mcu = None            # network MIDI (the desk box): music, and a Mackie Control surface
+        if net:
+            import netmidi
+            self.net = netmidi.Session("FM-1 Companion", 5004, self.from_net)
+            self.mcu = netmidi.Session("FM-1 Companion MCU", 5006, self.from_mcu)
+            self.mackie = netmidi.Mackie()
         self.peer, self.peer_path = None, None
         self.pairing_until = 0.0
         self.last_ble = 0.0
@@ -918,6 +926,9 @@ class MidiBridge:
                     self.note_watch(m, time.monotonic())
         elif dest == "USB":
             self.controllers.send_messages(messages)
+        elif dest == "NET":
+            if self.net:
+                self.net.send(messages)
         else:
             for m in messages:
                 self.to_ble(m)
@@ -945,6 +956,9 @@ class MidiBridge:
 
         threading.Thread(target=body, daemon=True).start()
         threading.Thread(target=self.clock_loop, daemon=True).start()
+        for session in (self.net, self.mcu):
+            if session:
+                session.start()
 
     # ---- clock: watch incoming clock; as clock master, send our own instead
 
@@ -1052,6 +1066,24 @@ class MidiBridge:
                 key = f"{source}>{dest}"
                 self.deliver(key, self.routes[key].apply_all(message))
 
+    # network MIDI: a DAW's notes and clock (the routes' NET), and what it shows on the control surface
+    def from_net(self, message):
+        if not self.passes("NET", message):
+            return
+        self.route_from("NET", message)
+
+    def from_mcu(self, message):
+        replies = self.mackie.feed(message)
+        if replies:                           # the handshake some DAWs make before they use a surface
+            self.mcu.send(replies)
+
+    def net_status(self):
+        """{"net": computers on the music session, "mcu": the control surface's state, or None}"""
+        if not self.net:
+            return {}
+        mcu = self.mackie.state() if self.mcu.names() else None
+        return {"net": self.net.names(), "mcu": mcu, "net_error": self.net.error}
+
     # USB controllers -> the FM-1 (and Bluetooth, if that route is on); called on rtmidi's thread
     def from_controllers(self, message):
         if is_library_sysex(message) or not self.passes("USB", message):
@@ -1135,12 +1167,12 @@ class MidiBridge:
 
 # ---------------------------------------------------------------- in a process of its own
 
-def run_child(conn, source_match, enabled):
+def run_child(conn, source_match, enabled, net=False):
     """The MIDI process: MidiBridge, sending its status up the pipe when it changes and taking
     ("enabled", bool) and ("pair",) commands. Exits when the app's end of the pipe closes."""
     import os
     import metronome
-    bridge = MidiBridge(source_match, enabled)
+    bridge = MidiBridge(source_match, enabled, net)
     bridge.start()
     metro = metronome.Metronome(lambda: bridge.clock_status(time.monotonic()), on_start=make_realtime)
     wanted = [False, None, "mid", 48000]    # the metronome: on, the speaker, the click's level, the rate
@@ -1165,6 +1197,8 @@ def run_child(conn, source_match, enabled):
                 bridge.set_routes(command[1])
             elif command[0] == "metronome":        # ("metronome", on, speaker, level, rate)
                 wanted[:] = command[1:5]
+            elif command[0] == "mcu" and bridge.mcu:   # ("mcu", [messages]): the control surface, to the DAW
+                bridge.mcu.send([bytes(m) for m in command[1]])
 
     threading.Thread(target=commands, daemon=True).start()
     last, next_poll = None, 0.0
@@ -1179,6 +1213,7 @@ def run_child(conn, source_match, enabled):
                   "activity": round(bridge.activity(), 1),  # 0.1 s steps: at most ~5 updates a second
                   "clock": bridge.clock_status(now)}
         status["notes"], status["chans"] = bridge.notes_status(now)
+        status.update(bridge.net_status())
         if status != last:
             try:
                 conn.send(status)
@@ -1193,12 +1228,13 @@ class MidiProcess:
     one thread at a time, and drawing a screen frame takes ~75 ms on a Zero W: in the app's process
     that held notes back, unevenly. In its own process the kernel switches to it as a note arrives."""
 
-    def __init__(self, source_match, enabled=True):
+    def __init__(self, source_match, enabled=True, net=False):
         import multiprocessing
         ctx = multiprocessing.get_context("fork")
         self.conn, child = ctx.Pipe()
-        self.proc = ctx.Process(target=run_child, args=(child, source_match, enabled), daemon=True,
+        self.proc = ctx.Process(target=run_child, args=(child, source_match, enabled, net), daemon=True,
                                 name="fm1-midi")
+        self.net, self.mcu = [], None        # network MIDI: computers connected; the control surface's state
         self.enabled, self.peer, self.error = enabled, None, None
         self.pairing_until = 0.0
         self.usb, self.last_activity = None, 0.0
@@ -1224,6 +1260,7 @@ class MidiProcess:
             self.usb_b = status.get("usb_b")
             self.clock = status.get("clock")
             self.notes, self.chans = status.get("notes") or [], status.get("chans", 0)
+            self.net, self.mcu = status.get("net") or [], status.get("mcu")
 
     def poll(self):
         pass                                # the MIDI process watches the USB side itself
@@ -1256,3 +1293,7 @@ class MidiProcess:
 
     def set_metronome(self, on, target, level, rate):
         self.conn.send(("metronome", on, target, level, rate))
+
+    def mcu_send(self, messages):
+        """the control surface's moves (netmidi.Mackie.fader / press) to the DAW"""
+        self.conn.send(("mcu", [list(m) for m in messages]))

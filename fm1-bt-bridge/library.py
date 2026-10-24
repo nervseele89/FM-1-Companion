@@ -543,11 +543,13 @@ def job_fetch(name):
         job.done(f"Downloaded {asset['name']}", file=target.name, tag=release.get("tag_name"))
 
 
-PART = re.compile(r"^(.+_fm1)-(a|b|usb\d+)\.wav$")    # a take's part: "2026-10-23_180000_fm1-b.wav"
+PART = re.compile(r"^(.+_fm1)-(a|b|usb\d+|u-[a-z0-9]+)\.wav$")   # a take's part: "..._fm1-b.wav", "..._fm1-u-ep136.wav"
 
 
 def part_label(key):
-    """"a" -> "FM-1 A", "usb0" -> "USB keys", "usb1" -> "USB keys 2" """
+    """"a" -> "FM-1 A", "u-ep136" -> "EP136" (a USB device, by its name), "usb0" -> "USB keys" (before v2.9)"""
+    if key.startswith("u-"):
+        return key[2:].upper()
     if key.startswith("usb"):
         n = int(key[3:] or 0)
         return "USB keys" + (f" {n + 1}" if n else "")

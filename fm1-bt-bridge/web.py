@@ -14,6 +14,7 @@ Python's standard library only. Port: $FM1_WEB_PORT (default 80; install.sh lets
 """
 import json
 import os
+import re
 import shutil
 import sys
 import urllib.parse
@@ -56,8 +57,10 @@ def check_command(c):
               "clock_mode": value in ("follow", "box"), "click": value in ("low", "mid", "high"),
               "audio_rate": value in (44100, 48000),
               "volume": number and int(value) == value and 0 <= value <= 100}.get(key)
-        if key in ("mix_a", "mix_b", "mix_usb"):
+        if isinstance(key, str) and re.fullmatch(r"mix_(a|b|usb|u-[a-z0-9]+)", key):
             ok = number and int(value) == value and 0 <= value <= 200
+        if isinstance(key, str) and re.fullmatch(r"input_u-[a-z0-9]+", key):
+            ok = True
         if not ok:
             raise ValueError(f"bad setting {key!r}")
         return {"cmd": cmd, "key": key, "value": value}
@@ -576,18 +579,18 @@ function renderStatus() {
   $("s-usbkeys").textContent = (st.midi.controllers || []).join(", ") || "none";
 }
 // the mixer: a level for each sound source while there's more than one (FM-1 A and B, a USB keyboard's synth)
-const MIX_NAMES = {a: "FM-1 A", b: "FM-1 B", usb: "USB keys"};
+// a source with more than two channels (an audio interface) shows which pair it takes; tap it for the next
 let shownMix = "", mixUntil = 0, mixTimer;
 function renderMixer(st) {
-  const m = st.mixer, keys = m ? Object.keys(m).join() : "";
+  const m = st.mixer, keys = m ? m.map((c) => c.key + c.label + (c.input || "")).join() : "";
   if (keys !== shownMix) {
     shownMix = keys;
-    $("s-mix").innerHTML = !m ? "" : `<div class="line"><span class="k">Mixer</span></div>` + Object.keys(m).map((k) =>
-      `<div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">${m.b == null && k === "a" ? "FM-1" : MIX_NAMES[k]}</span><b id="mx-${k}v"></b></div>
-       <input type="range" id="mx-${k}" min="0" max="200" step="5" oninput="mixSet('${k}', this.value)"></div>`).join("");
+    $("s-mix").innerHTML = !m ? "" : `<div class="line"><span class="k">Mixer</span></div>` + m.map((c) =>
+      `<div class="line" style="display:block"><div class="row" style="justify-content:space-between"><span class="k">${esc(c.label)}${c.input ? ` <button onclick="set('input_${c.key}', true)">${esc(c.input)}</button>` : ""}</span><b id="mx-${c.key}v"></b></div>
+       <input type="range" id="mx-${c.key}" min="0" max="200" step="5" oninput="mixSet('${c.key}', this.value)"></div>`).join("");
   }
   if (!m || Date.now() < mixUntil) return;
-  for (const k of Object.keys(m)) { $(`mx-${k}`).value = m[k]; $(`mx-${k}v`).textContent = m[k] + "%"; }
+  for (const c of m) { $(`mx-${c.key}`).value = c.level; $(`mx-${c.key}v`).textContent = c.level + "%"; }
 }
 function mixSet(k, v) {
   mixUntil = Date.now() + 2500; $(`mx-${k}v`).textContent = v + "%";
@@ -600,15 +603,17 @@ function toggleRec() { cmd({cmd:"record", value: st && st.recording != null ? "s
 
 // ---------------------------------------------------------------- MIDI tab
 // FM-1 B's row and column only while a second FM-1 is plugged in (then the first is FM-1 A)
-const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB"];
-let twoFm1 = false, SOURCES = {}, DESTS = [];
-function setFm1s(two) {
-  twoFm1 = two;
-  SOURCES = Object.fromEntries(Object.entries(ALL_SOURCES).filter(([k]) => two || k !== "FM-1 B").map(([k, v]) => [k, two && k === "FM-1" ? "FM-1 A" : v]));
-  DESTS = ALL_DESTS.filter((d) => two || d !== "FM-1 B");
-  if (!two && sel.includes("FM-1 B")) sel = "BT>FM-1";
+// NET (network MIDI: a DAW on a computer, the desk box) only while a computer is connected
+const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "NET":"Network", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB", "NET"];
+let twoFm1 = false, netOn = false, SOURCES = {}, DESTS = [];
+function setFm1s(two, net = netOn) {
+  twoFm1 = two; netOn = net;
+  const shown = (k) => (two || k !== "FM-1 B") && (net || k !== "NET");
+  SOURCES = Object.fromEntries(Object.entries(ALL_SOURCES).filter(([k]) => shown(k)).map(([k, v]) => [k, two && k === "FM-1" ? "FM-1 A" : v]));
+  DESTS = ALL_DESTS.filter(shown);
+  if ((!two && sel.includes("FM-1 B")) || (!net && sel.includes("NET"))) sel = "BT>FM-1";
 }
-const destName = (d) => d === "BT" ? "Bluetooth" : twoFm1 && d === "FM-1" ? "FM-1 A" : d;
+const destName = (d) => d === "BT" ? "Bluetooth" : d === "NET" ? "Network" : twoFm1 && d === "FM-1" ? "FM-1 A" : d;
 const CHORDS = ["oct","5th","maj","min","7","maj7","m7"], ARPS = ["up","down","updown","played","random"], RATES = ["1/4","1/8","1/8T","1/16"];
 let routes = null, sel = "BT>FM-1", routesDirtyUntil = 0, saveTimer;
 setFm1s(false);
@@ -852,7 +857,8 @@ async function status() {
   // redraw the MIDI tab only when the box's routes or presets changed: a redraw closes an open dropdown,
   // and the presets' name fields mustn't change under your fingers
   const r = JSON.stringify(st.routes), p = JSON.stringify(st.presets || {});
-  if (!!st.midi.usb_b !== twoFm1) { setFm1s(!!st.midi.usb_b); shownRoutes = ""; }
+  const net = !!(st.midi.net && st.midi.net.length);
+  if (!!st.midi.usb_b !== twoFm1 || net !== netOn) { setFm1s(!!st.midi.usb_b, net); shownRoutes = ""; }
   if (r !== shownRoutes && Date.now() > routesDirtyUntil) { routes = JSON.parse(r); shownRoutes = r; renderMatrix(); renderEditor(); }
   if (p !== shownPresets && !String(document.activeElement && document.activeElement.id).startsWith("pn")) { shownPresets = p; renderPresets(); }
 }

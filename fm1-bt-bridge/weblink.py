@@ -5,6 +5,7 @@ writes the status about once a second when something changed (monitor thread) an
 main loop, so they go through the same code as the joystick. Writes to the FM-1's data (restore, loads,
 firmware) aren't commands: they still wait for a hold-press on the box (library.ask_box).
 """
+import re
 import time
 
 import blemidi
@@ -24,14 +25,14 @@ class WebLink:
         return {
             "fm1": self.source and ((self.fw_label or self.source["label"]) + (" + B" if self.source_b else "")),
             "live": self.live(),
-            "mixer": ({k: self.mix_level(k) for k in dict.fromkeys("usb" if c.startswith("usb") else c
-                                                               for c, _ in self.mix_channels())}
+            "mixer": ([{"key": k, "label": self.channel_name(k, n), "level": self.mix_level(k),
+                        "input": self.input_label(k, n)} for k, n in self.mix_channels()]
                       if len(self.mix_channels()) > 1 else None),
             "speaker": self.sink and self.sink["label"], "speaker_name": self.state["last_name"],
             "connecting": self.connecting, "volume": self.volume, "battery": self.battery,
             "midi": {"peer": midi and midi.peer, "enabled": bool(midi and midi.enabled), "usb": midi and midi.usb_label(),
                      "error": midi and midi.error, "controllers": list(getattr(midi, "controllers", None) or []),
-                     "usb_b": getattr(midi, "usb_b", None)},
+                     "usb_b": getattr(midi, "usb_b", None), "net": list(getattr(midi, "net", None) or [])},
             "clock": clock, "clock_text": self.clock_text(),
             "recording": int(self.recorder.seconds()) if self.recorder.recording() else None,
             "settings": dict({k: self.state[k] for k in SETTINGS}, arp_on=keys["arp_on"], chord_on=keys["chord_on"],
@@ -91,9 +92,12 @@ class WebLink:
                 if self.keys_route()[key] != value:
                     self.toggle_keys(key)
                 return None                   # toggle_keys says it
-            if key in ("mix_a", "mix_b", "mix_usb") and isinstance(value, int) and 0 <= value <= 200:
+            if re.fullmatch(r"mix_(a|b|usb|u-[a-z0-9]+)", key) and isinstance(value, int) and 0 <= value <= 200:
                 self.set_mix_level(key[4:], value)
                 return None
+            if re.fullmatch(r"input_u-[a-z0-9]+", key):          # a multichannel source: its next pair
+                pair = self.next_input_pair(key[6:])
+                return pair and f"Web: inputs {pair}"
             if key == "volume" and isinstance(value, int) and 0 <= value <= 100 and self.sink:
                 self.volume_to(value)
                 return None

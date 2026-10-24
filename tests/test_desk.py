@@ -134,25 +134,28 @@ def test_touch_screens():
         ui.touch("down", x, y, now)
         ui.touch("up", x, y, now + hold)
         ui.render(now, force=True)
+    def tab(name):                                                    # a tab, by the button that opens it
+        box = next(w[0] for w in ui.widgets if w[3] == ("tab", name))
+        tap((box[0] + box[2]) // 2, (box[1] + box[3]) // 2)
     ui.render(now, force=True)
     assert app.display.image.size == (480, 320) and ui.theme == sloopstyle.Theme("GREEN")
-    tap(144, 300)                                                     # the MIX tab
+    tab("MIX")
     assert ui.tab == "MIX"
-    slider = next(w for w in ui.widgets if w[3] == ("slide", "usb"))
+    slider = next(w for w in ui.widgets if w[3] == ("slide", "u-smk37va"))
     box = slider[0]
     ui.touch("down", (box[0] + box[2]) // 2, box[3] - 10, now)        # the bottom: 0%
-    assert app.mix_level("usb") == 0
+    assert app.mix_level("u-smk37va") == 0
     ui.touch("move", (box[0] + box[2]) // 2, box[1] + 10, now)        # dragged to the top: 200%
     ui.touch("up", (box[0] + box[2]) // 2, box[1] + 10, now)
-    assert app.mix_level("usb") == 200
-    tap(240, 300)                                                     # MIDI
+    assert app.mix_level("u-smk37va") == 200
+    tab("MIDI")
     cell = next(w for w in ui.widgets if w[3] == ("route", "BT>USB"))
     tap((cell[0][0] + cell[0][2]) // 2, (cell[0][1] + cell[0][3]) // 2)
     assert app.routes()["BT>USB"]["on"] is True                      # off at first: tapped on
     tap((cell[0][0] + cell[0][2]) // 2, (cell[0][1] + cell[0][3]) // 2, hold=0.8)
     assert ui.classic and app.screen == "route" and app.route_key == "BT>USB"   # held: its settings
     ui.classic, app.screen = False, "status"
-    tap(432, 300)                                                     # MORE, then THEME round to AMBER
+    tab("MORE")                                                       # then THEME round to AMBER
     ui.more_top = 3
     ui.render(now, force=True)
     row = next(w for w in ui.widgets if w[3] == ("more", "THEME"))
@@ -202,6 +205,44 @@ def test_every_meter_draws():
             for k in range(3):
                 dm.draw(App(i, x), img, (0, 35, 480, 275), sloopstyle.Theme("AMBER"), 1.0 + k * 0.1)
     assert dm.tune is None                                            # silence: no note
+
+
+def test_daw_surface():
+    """the DAW tab: Kraken's names and faders shown, a fader dragged and PLAY pressed sent back as Mackie Control"""
+    import bridge
+    import deskui
+
+    class Midi:
+        enabled, error, peer, usb_b, net, notes, chans, clock = True, None, None, None, ["Mac"], [], 0, None
+
+        def __init__(self):
+            names = "".join(f"{n:<6} " for n in ["BASS", "KEYS"] + [""] * 6)
+            self.mcu = {"faders": [8192] * 9, "leds": [0x5E], "lcd": [names, " " * 56], "seen": 1.0}
+            self.sent = []
+
+        def mcu_send(self, messages):
+            self.sent += messages
+
+        def usb_label(self):
+            return "Felucca"
+    app = bridge.App(RgbCapture(), dict(bridge.DEFAULTS))
+    app.midi = Midi()
+    ui = deskui.DeskUI(app, app.display)
+    ui.theme_check = 1e12
+    ui.open_tab("DAW")
+    ui.render(0.0, force=True)
+    fader = next(w[0] for w in ui.widgets if w[3] == ("fader", 1))
+    ui.touch("down", (fader[0] + fader[2]) // 2, fader[3] - 10, 0.0)              # KEYS to the bottom
+    ui.touch("up", 0, 0, 0.0)
+    play = next(w[0] for w in ui.widgets if w[3] == ("daw", "play"))
+    ui.touch("down", play[0] + 5, play[1] + 5, 0.0)
+    ui.touch("up", play[0] + 5, play[1] + 5, 0.0)
+    assert app.midi.sent == [bytes([0x90, 0x69, 127]), bytes([0xE1, 0, 0]),     # finger on KEYS' fader, moved,
+                             bytes([0x90, 0x69, 0]), bytes([0x90, 0x5E, 127])]    # lifted; then PLAY
+    pan = next(w[0] for w in ui.widgets if w[3] == ("pan+", 0))
+    ui.touch("down", pan[0] + 2, pan[1] + 2, 0.0)
+    ui.touch("up", pan[0] + 2, pan[1] + 2, 0.0)
+    assert app.midi.sent[-1] == bytes([0xB0, 0x10, 2])                          # BASS panned right
 
 
 if __name__ == "__main__":

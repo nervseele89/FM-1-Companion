@@ -479,7 +479,8 @@ def test_recording_parts():
             w.setframerate(48000)
             w.writeframes(frames.tobytes())
         time.sleep(1.7)
-        assert linked == [["alsa_input.usb-Felucca-00", "alsa_input.usb-Felucca-00.2", "alsa_input.usb-SMK-37"]]
+        assert linked == [[(n, "capture_FL", "capture_FR") for n in
+                           ("alsa_input.usb-Felucca-00", "alsa_input.usb-Felucca-00.2", "alsa_input.usb-SMK-37")]]
         app.finish_recording("Saved: {} recorded")
         assert "+ 3 parts" in app.message and app.parts_job is None
         take = raw.name
@@ -500,11 +501,11 @@ def test_recording_parts():
     listing = library.listing()["recordings"]
     assert [r["name"] for r in listing] == [take]                              # the parts are under it
     assert [(x["part"], x["label"], x["seconds"]) for x in listing[0]["parts"]] == [
-        ("a", "FM-1 A", 1), ("b", "FM-1 B", 1), ("usb0", "USB keys", 1)]
+        ("a", "FM-1 A", 1), ("b", "FM-1 B", 1), ("u-smk37va", "SMK37VA", 1)]
     app.pick_recording(take)
     assert [i[2] for i in app.pick["items"]] == ["play", "edit", "parts", "delete"]
     app.recording_action(take, "parts")
-    assert [i[0] for i in app.pick["items"]] == ["FM-1 A", "FM-1 B", "USB keys"]
+    assert [i[0] for i in app.pick["items"]] == ["FM-1 A", "FM-1 B", "SMK37VA"]
     app.recording_action(take, "delete")
     assert app.confirm["lines"][-1] == "and its 3 parts"
     app.confirm["action"]()
@@ -572,7 +573,11 @@ def test_two_fm1s():
     app.on_key("press")
     assert len(app.matrix_lists()[0]) == 4                       # one FM-1: no B row
     app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
-    assert app.matrix_lists() == (midiui.blemidi.SOURCES, midiui.blemidi.DESTINATIONS)
+    no_net = lambda names: [n for n in names if n != "NET"]         # noqa: E731  (no computer on network MIDI)
+    assert app.matrix_lists() == (no_net(midiui.blemidi.SOURCES), no_net(midiui.blemidi.DESTINATIONS))
+    app.midi.net = ["Pat's Mac"]
+    assert "NET" in app.matrix_lists()[0] and "NET" in app.matrix_lists()[1]
+    app.midi.net = []
     app.mx = [3, 0]
     assert app.cell() == "FM-1 B>FM-1"
     snap(app, "matrix-two")
@@ -611,16 +616,60 @@ def test_mixer():
     assert [r[0] for r in app.settings_rows()] == ["speaker", "audio", "rate"]      # one source: no mixer
     app.others = others
     rows = app.settings_rows()
-    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_usb", "USB keys level"),
+    assert [r[:2] for r in rows[3:]] == [("mix_a", "FM-1 level"), ("mix_u-smk37va", "SMK-37+VA level"),
                                          ("rec_parts", "Record parts")]
     app.source_b = source_b
-    assert [r[0] for r in app.settings_rows()[3:]] == ["mix_a", "mix_b", "mix_usb", "rec_parts"]
+    assert [r[0] for r in app.settings_rows()[3:]] == ["mix_a", "mix_b", "mix_u-smk37va", "rec_parts"]
     app.setting = 4                                                  # FM-1 B: down 4 steps of 5%
     keys(app, "press", "down", "down", "down", "down")
     assert app.mix_level("b") == 80 and app.settings_rows()[4][2] == "± 80%"
     snap(app, "settings-mixer")
     keys(app, "left")
-    assert app.editing is None and app.mix_level("usb0") == 100
+    assert app.editing is None and app.mix_level("u-smk37va") == 100
+
+
+def port(i, node_id, name, n):
+    return {"type": "PipeWire:Interface:Port", "id": i,
+            "info": {"props": {"node.id": node_id, "port.name": name, "port.direction": "out", "port.id": n}}}
+
+
+def test_any_usb_audio():
+    """any USB audio: its own channel by name, an 8-channel interface's pair, a mono mic on both sides"""
+    fm1 = node(81, "alsa_input.usb-H__gelton_Instruments_Felucca-00.analog-stereo", 3, **{"alsa.card_name": "Felucca"})
+    side = node(90, "alsa_input.usb-teenage_engineering_EP-136-00.multichannel-input", 4, **{"alsa.card_name": "EP-136"})
+    mic = node(91, "alsa_input.usb-Mic-00.mono-fallback", 5, **{"alsa.card_name": "USB Mic"})
+    ports = [port(200 + k, 90, f"capture_AUX{k}", k) for k in (3, 0, 1, 2, 4, 5, 6, 7)] + [port(300, 91, "capture_MONO", 0)]
+    source, _, _, others = bridge.pick_nodes([fm1, side, mic] + ports, bridge.DEFAULTS["source_match"])
+    assert others[0]["ports"] == [f"capture_AUX{k}" for k in range(8)]          # in channel order
+    app = make_app()
+    app.source, app.others = source, others
+    assert [k for k, _ in app.mix_channels()] == ["a", "u-ep136", "u-usbmic"]
+    assert [app.channel_name(k) for k, _ in app.mix_channels()] == ["FM-1", "EP-136", "USB MIC"]
+    ep, mono = others
+    assert app.input_pairs(ep) == ["1-2", "3-4", "5-6", "7-8"] and app.input_pair("u-ep136", ep) == (
+        "capture_AUX0", "capture_AUX1")
+    assert app.next_input_pair("u-ep136") == "3-4"
+    assert app.input_pair("u-ep136", ep) == ("capture_AUX2", "capture_AUX3")
+    assert app.input_label("u-ep136", ep) == "IN 3-4" and app.capture_ports_of("u-ep136", ep)[1] == "capture_AUX3"
+    assert app.input_pair("u-usbmic", mono) == ("capture_MONO", "capture_MONO")   # one channel: both sides
+    assert app.input_pair("a", source) is None                                  # stereo: as ever
+    assert bridge.device_keys([{"label": "EP-136"}, {"label": "EP-136"}]) == ["u-ep136", "u-ep1362"]
+    fake = FakePwPlay()
+    import meters
+    bridge.subprocess.Popen, linked = fake, []
+    real_link, bridge.link_ports = bridge.link_ports, linked.append
+    real_rate, bridge.set_rate = bridge.set_rate, lambda rate: None
+    try:                                        # the loopback takes the pair by hand, not PipeWire's own mixdown
+        loop = bridge.Loopback()
+        loop.ensure(ep["name"], "bluez_output.jbl", "fm1-mix-u-ep136", ("capture_AUX2", "capture_AUX3"))
+        assert "node.autoconnect=false" in fake.cmd[2] and "target.object" not in fake.cmd[2]
+        time.sleep(1.3)
+        assert linked == [[(ep["name"], "capture_AUX2", "fm1-in-fm1-mix-u-ep136", "input_FL"),
+                           (ep["name"], "capture_AUX3", "fm1-in-fm1-mix-u-ep136", "input_FR")]]
+        loop.stop()
+    finally:
+        bridge.subprocess.Popen = meters.subprocess.Popen = FakePwPlay.real
+        bridge.link_ports, bridge.set_rate = real_link, real_rate
 
 
 def test_pw_watch():
@@ -778,7 +827,7 @@ if __name__ == "__main__":
                      ("test_job_screen_and_status", test_job_screen_and_status), ("test_audio_rate", test_audio_rate),
                      ("test_clock", test_clock), ("test_recordings", test_recordings),
                      ("test_recording_parts", test_recording_parts),
-                     ("test_midi_matrix", test_midi_matrix), ("test_two_fm1s", test_two_fm1s), ("test_mixer", test_mixer), ("test_pw_watch", test_pw_watch),
+                     ("test_midi_matrix", test_midi_matrix), ("test_two_fm1s", test_two_fm1s), ("test_mixer", test_mixer), ("test_any_usb_audio", test_any_usb_audio), ("test_pw_watch", test_pw_watch),
                      ("test_arp_rows_and_presets", test_arp_rows_and_presets),
                      ("test_web_link", test_web_link)]:
         fn()

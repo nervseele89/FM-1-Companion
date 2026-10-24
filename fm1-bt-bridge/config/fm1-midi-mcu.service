@@ -1,0 +1,10 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<!-- The desk box's control surface (the DAW tab, Mackie Control) in a computer's network MIDI list -->
+<service-group>
+  <name replace-wildcards="yes">FM-1 Companion MCU on %h</name>
+  <service>
+    <type>_apple-midi._udp</type>
+    <port>5006</port>
+  </service>
+</service-group>

@@ -57,7 +57,37 @@ tested on the real FM-1 with a backup, a restore (read back byte for byte), a pr
 update from SLOOP 2.7.1 to 2.8 (projects, presets and samples kept). The meters were checked on the box with
 music playing: about a quarter of the CPU while shown, and no audio dropouts.
 
-## The desk box: Desk v1.0
+## The desk box: Desk v1.1
+
+| Kraken or Ableton from the box | Any USB audio, each on its own slider |
+|---|---|
+| ![The DAW tab: eight faders with track names, levels, meters, pan, solo and mute, and the transport](docs/images/desk-ui-daw-theme.png) | ![The mixer with FM-1 A and B, an SMK-37, an 8-channel EP-136 on inputs 3-4, a USB mic and the speaker](docs/images/desk-ui-usb-theme.png) |
+
+> **Hardware testing starts 10/24/2026.** Desk v1.0 and v1.1 are software built and tested on a computer;
+> the Pi 3, the screen and the PiSugar 3 Plus arrive that day.
+
+**New in Desk v1.1**
+- **Plays with a DAW over the network:** the desk box is a network MIDI device (RTP-MIDI, as macOS's Network
+  MIDI and rtpMIDI on Windows speak it) with two ports. **FM-1 Companion** is music: it's **NET** in the MIDI
+  routes, so a DAW plays both FM-1s and your USB synths, sends them its clock, and records what they play.
+  **FM-1 Companion MCU** is a control surface.
+- **The DAW tab, a Mackie Control surface** for [Kraken](https://github.com/isod89/sodwave-site) (SLOOP's
+  creator's browser DAW) and **Ableton Live**: 8 touch faders with the DAW's track names, levels and meters,
+  pan, solo, mute and select, banks of 8, and play, stop, record, loop, rewind and fast forward, all lit to
+  match the DAW. Fader touch, so Live records automation cleanly, and the surface handshake some DAWs want.
+- **Pretty much any USB audio and MIDI device:** each USB audio device gets **its own mixer channel, named
+  after it** (an SMK-37's synth, a K.O. Sidekick, a USB mic), with its own level, slider, Home tile and file in
+  Record parts. An interface with more than two channels takes a pair of them (tap **3-4** above its slider for
+  the next), and a mono mic plays on both sides. Any class-compliant USB MIDI device appears in the routes by
+  itself, as before.
+- The **pocket box** gets the per-device levels too: its Settings › Audio has a row for each device. Network
+  MIDI and the DAW tab are the desk box's.
+
+**Connecting a DAW:** on the computer, open network MIDI (Mac: Audio MIDI Setup › MIDI Studio › Network;
+Windows: the free rtpMIDI driver) and connect a session to each of the box's two. In Kraken, set the port
+connected to "FM-1 Companion MCU" to Mackie; in Live, choose MackieControl as a control surface on that port.
+
+<details><summary>Desk v1.0: the desk box's first release</summary>
 
 | Home, in FM-1 A's own colours | The mixer |
 |---|---|
@@ -69,14 +99,12 @@ A second build of the Companion for the desk: a **Raspberry Pi 3 B+** with a **3
 pocket box (audio, the mixer, recording, MIDI, the library, the web app) with screens of its own, made for
 touch and drawn in the style of [SLOOP](https://github.com/isod89/sloop-fm1).
 
-> **Hardware testing starts 10/24/2026.** Desk v1.0 is the software, built and tested on a computer against
-> the real drawing code; the Pi 3, the screen and the PiSugar 3 Plus arrive that day. Expect the touch
-> calibration and the screen driver setting to change once it's on the real hardware.
+Expect the touch calibration and the screen driver setting to change once it's on the real hardware.
 
 **What's in Desk v1.0**
-- **Five tabs along the bottom:** HOME (the sources as SLOOP-style tiles in the track colours, the tempo, and
+- **Tabs along the bottom:** HOME (the sources as SLOOP-style tiles in the track colours, the tempo, and
   big REC, START and TAP buttons), MIX (a slider for each source and the speaker), MIDI (the routes: tap one to
-  switch it, hold it to open its settings), METER and MORE.
+  switch it, hold it to open its settings), METER, DAW (from v1.1) and MORE.
 - **SLOOP's look:** SLOOP's own pixel font (Terminus), its five palettes (Green, Amber, Cyan, Red, Mono) and its
   four track colours, from SLOOP's source.
 - **Follows FM-1 A's colours:** the box asks FM-1 A over USB what SLOOP's MENU › COLOR is set to (a palette, or
@@ -100,6 +128,8 @@ touch and drawn in the style of [SLOOP](https://github.com/isod89/sloop-fm1).
 | In SLOOP's Green palette | |
 |---|---|
 | ![Desk home in Green](docs/images/desk-ui-home.png) | ![Desk mixer in Green](docs/images/desk-ui-mix.png) |
+
+</details>
 
 **Parts:** Raspberry Pi 3 B+, a 3.5" 480×320 SPI touchscreen (ILI9486 display, XPT2046 touch: the common
 "3.5 inch RPi LCD"), a PiSugar 3 Plus, a 1-to-2 GPIO splitter for the card slot, and a microSD card.
@@ -279,6 +309,7 @@ sudo reboot
 | `fm1-bt-bridge/device.py` | Which build a box is (pocket or desk) and what its hardware can do |
 | `fm1-bt-bridge/deskui.py` | The desk box's touch screens: the tabs, HOME, MIX, MIDI, METER, MORE |
 | `fm1-bt-bridge/deskmeters.py` | The eleven meters drawn for the desk box's screen |
+| `fm1-bt-bridge/netmidi.py` | Network MIDI (RTP-MIDI) and the Mackie Control surface, for a DAW (the desk box) |
 | `fm1-bt-bridge/desk.py` | The desk box's touchscreen and touch input (the kernel's framebuffer and touch device) |
 | `fm1-bt-bridge/sloopstyle.py` | SLOOP's palettes, track colours, font and themes, for the desk box |
 | `fm1-bt-bridge/vendor/fonts/` | Terminus, SLOOP's pixel font (SIL Open Font License, credited in `VENDORED.md`) |

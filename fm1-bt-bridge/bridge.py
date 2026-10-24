@@ -58,6 +58,7 @@ DEFAULTS = {
     "library_fm1": "A",     # with two FM-1s on a hub, the one backups, restores and loads go to (library.py reads it)
     "mix": {"a": 100, "b": 100, "usb": 100},   # the mixer's levels (%, to 200): FM-1 A, FM-1 B, USB keyboards' sound
     "rec_parts": False,     # while mixing, recordings also keep each source on its own ("..._fm1-a.wav" etc.)
+    "inputs": {},           # a multichannel USB source's first channel taken (0: 1-2, 2: 3-4 ...), by mixer key
     "build": "auto",        # "pocket" (Zero + OLED HAT), "desk" (Pi 3/4 + 3.5" touchscreen) or "auto" (device.py)
     "touch_cal": [3900, 200, 3900, 200, True],   # the desk touchscreen: raw x left/right, y top/bottom, swap
     "desk_theme": "follow",  # the desk box's colours: "follow" (FM-1 A's, as SLOOP shows them) or a SLOOP palette
@@ -205,11 +206,41 @@ def bt_pair(mac):
 
 # ---------------------------------------------------------------- audio (PipeWire)
 
+def capture_ports(objects):
+    """{node id: [its capture ports' names, in channel order]} ("capture_FL", "capture_FR"; an 8-channel interface:
+    "capture_AUX0" ... "capture_AUX7"; a mono mic: one)"""
+    ports = {}
+    for o in objects:
+        if o.get("type") != "PipeWire:Interface:Port":
+            continue
+        props = (o.get("info") or {}).get("props") or {}
+        name = str(props.get("port.name", ""))
+        if props.get("port.direction") == "out" and name.startswith("capture_"):
+            ports.setdefault(props.get("node.id"), []).append((int(props.get("port.id", 0) or 0), name))
+    return {node: [n for _, n in sorted(found)] for node, found in ports.items()}
+
+
+def device_keys(nodes):
+    """the other USB sound sources' mixer keys, from their names: "u-smk37va", "u-ep136" (a second one alike:
+    "u-ep1362"), so a device keeps its level and input pair however the others come and go"""
+    keys, used = [], set()
+    for node in nodes:
+        slug = re.sub(r"[^a-z0-9]", "", str(node.get("label", "")).lower())[:10] or "usb"
+        key, n = f"u-{slug}", 2
+        while key in used:
+            key, n = f"u-{slug}{n}", n + 1
+        used.add(key)
+        keys.append(key)
+    return keys
+
+
 def pick_nodes(objects, source_match, cards=()):
     """From pw-dump's objects: (FM-1 A's USB input, the Bluetooth headphones, FM-1 B's input, [other USB inputs:
-    a keyboard's own sound]), each a dict or None. cards: the FM-1s' sound card numbers, A first
-    (sloop.fm1_cards); B only with two of them. An FM-1 whose name couldn't be read is known by its USB ID."""
+    a keyboard's own synth, an audio interface]), each a dict or None, with its capture ports ("ports"). cards:
+    the FM-1s' sound card numbers, A first (sloop.fm1_cards); B only with two of them. An FM-1 whose name couldn't
+    be read is known by its USB ID."""
     sources, fallbacks, sink = [], [], None
+    ports = capture_ports(objects)
     for o in objects:
         if o.get("type") != "PipeWire:Interface:Node":
             continue
@@ -224,6 +255,7 @@ def pick_nodes(objects, source_match, cards=()):
                             ("node.name", "node.description", "node.nick", "alsa.card_name", "alsa.long_card_name"))
             path = re.search(r":(\d+)", str(props.get("api.alsa.path", "")))   # "front:3": sound card 3
             node["card"] = int(path.group(1)) if path else None
+            node["ports"] = ports.get(o.get("id"), [])
             if any(m in text.lower() for m in source_match):
                 sources.append(node)
             elif ".usb-" in name:
@@ -371,9 +403,11 @@ class Loopback:
         self.proc, self.key = None, None
         self.rate, self.paused_until = rate, 0.0
 
-    def ensure(self, source, sink, name=None):
-        """name: the playback side's node name (a mixer channel's, to set its level there)"""
-        key = (source, sink, name) if source and sink else None
+    def ensure(self, source, sink, name=None, pair=None):
+        """name: the playback side's node name (a mixer channel's, to set its level there); pair: (left, right)
+        capture ports of source to take (an 8-channel interface's 3-4, or a mono mic's one port twice) instead
+        of letting PipeWire fold all its channels into stereo"""
+        key = (source, sink, name, pair) if source and sink else None
         if key == self.key and (key is None or self.proc.poll() is None):
             return
         if time.monotonic() < self.paused_until:
@@ -381,13 +415,19 @@ class Loopback:
         self.stop()
         if key:
             set_rate(self.rate)
+            inp = f"fm1-in-{name}" if name else "fm1-in"
+            capture = (f"node.name={inp} node.autoconnect=false node.dont-reconnect=true audio.position=[FL,FR]"
+                       if pair else f"target.object={source} node.dont-reconnect=true")
             self.proc = subprocess.Popen(
                 ["pw-loopback",
-                 "--capture-props", f"target.object={source} node.dont-reconnect=true",
+                 "--capture-props", capture,
                  "--playback-props", f"target.object={sink} node.dont-reconnect=true"
                  + (f" node.name={name}" if name else "")],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.key = key
+            if pair:                          # its two inputs to the chosen ports, once the loopback is there
+                links = [(source, pair[0], inp, "input_FL"), (source, pair[1], inp, "input_FR")]
+                threading.Thread(target=lambda: (time.sleep(1.0), link_ports(links)), daemon=True).start()
 
     def running(self):
         return self.proc is not None and self.proc.poll() is None
@@ -412,6 +452,17 @@ class Loopback:
 MIX_MAX = 200                           # the levels go to 200%: some keyboards' synths are much quieter
 
 
+def link_ports(links):
+    """[(output node, port, input node, port)] linked by one pw-cli (one connection to PipeWire for them all);
+    the links stay until either end goes"""
+    lines = [f"create-link {a} {pa} {b} {pb} {{ object.linger = true }}" for a, pa, b, pb in links]
+    try:
+        subprocess.run(["pw-cli"], input="\n".join(lines + ["quit"]) + "\n", text=True, timeout=20,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 class Mixer:
     """With more than one sound source (FM-1 A and B, a USB keyboard's own sound): one pw-loopback a source,
     straight to the speaker, its playback node named fm1-mix-<key> so its level can be set there; PipeWire adds
@@ -428,19 +479,19 @@ class Mixer:
         return any(loop.running() for loop in self.channels.values())
 
     def ensure(self, sink, sources):
-        """sink: the speaker's node name or None; sources: [(key, source node name)]"""
+        """sink: the speaker's node name or None; sources: [(key, source node name, ports pair or None)]"""
         if time.monotonic() < self.paused_until:
             return
         if sink != self.sink:
             self.stop()
             self.sink = sink
-        wanted = dict(sources) if sink else {}
+        wanted = {key: (source, pair) for key, source, pair in sources} if sink else {}
         for key in [k for k in self.channels if k not in wanted]:
             self.channels.pop(key).stop()
-        for key, source in wanted.items():
+        for key, (source, pair) in wanted.items():
             loop = self.channels.setdefault(key, Loopback(self.rate))
             loop.rate = self.rate
-            loop.ensure(source, sink, f"fm1-mix-{key}")
+            loop.ensure(source, sink, f"fm1-mix-{key}", pair)
 
     def set_levels(self, objects, levels):
         """levels: {key: percent}, set on the channels' nodes once pw-dump shows them"""
@@ -780,8 +831,8 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         channels = self.mix_channels()
         if len(channels) > 1:                 # more than one source: through the mixer, each at its level
             self.loop.ensure(None, None)
-            self.mixer.ensure(sink and sink["name"],
-                              [(key, node["name"]) for key, node in channels if self.mix_level(key) > 0])
+            self.mixer.ensure(sink and sink["name"], [(key, node["name"], self.input_pair(key, node))
+                                                      for key, node in channels if self.mix_level(key) > 0])
             self.mixer.set_levels(objects, {key: self.mix_level(key) for key, _ in channels})
             self.mix_lost = 0
         elif self.mixer.running() and self.mix_lost < 1:
@@ -793,12 +844,72 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.heal_pipewire(source)
 
     def mix_channels(self):
-        """[(key, node)] of the sound sources there are: "a", "b" (the FM-1s), "usb0"... (keyboards' own sound)"""
-        found = [("a", self.source), ("b", self.source_b)] + [(f"usb{i}", n) for i, n in enumerate(self.others)]
+        """[(key, node)] of the sound sources there are: "a", "b" (the FM-1s), then any other USB audio (a
+        keyboard's synth, an audio interface, a mic), each by its own key ("u-ep136": device_keys)"""
+        found = [("a", self.source), ("b", self.source_b)] + list(zip(device_keys(self.others), self.others))
         return [(key, node) for key, node in found if node]
 
+    def channel_name(self, key, node=None):
+        """"FM-1 A", "FM-1 B", or the device's own name ("SMK-37+VA", "EP-136")"""
+        if key == "a":
+            return "FM-1 A" if self.source_b else "FM-1"
+        if key == "b":
+            return "FM-1 B"
+        if node is None:
+            node = dict(self.mix_channels()).get(key) or {}
+        return str(node.get("label") or "USB").upper()[:10]
+
     def mix_level(self, key):
-        return int((self.state.get("mix") or {}).get("usb" if key.startswith("usb") else key, 100))
+        mix = self.state.get("mix") or {}
+        if key in mix:
+            return int(mix[key])
+        return int(mix.get("usb", 100)) if key.startswith("u-") else 100     # (before: one level for all USB)
+
+    def input_pairs(self, node):
+        """the channel pairs a source can give: [] for stereo, else ["1-2", "3-4", ...] (a mono source: ["1"])"""
+        ports = node.get("ports") or []
+        if len(ports) == 1:
+            return ["1"]
+        if len(ports) <= 2:
+            return []
+        return [f"{i + 1}-{min(i + 2, len(ports))}" for i in range(0, len(ports), 2)]
+
+    def input_pair(self, key, node):
+        """(left, right) capture ports to take from a source with more or fewer than two channels, else None"""
+        ports = node.get("ports") or []
+        if len(ports) == 1:
+            return (ports[0], ports[0])
+        if len(ports) <= 2:
+            return None
+        first = min(int((self.state.get("inputs") or {}).get(key, 0)), (len(ports) - 1) // 2 * 2)
+        return (ports[first], ports[min(first + 1, len(ports) - 1)])
+
+    def next_input_pair(self, key):
+        """the next pair of channels for a multichannel source (1-2, 3-4, ... round)"""
+        node = dict(self.mix_channels()).get(key)
+        pairs = self.input_pairs(node) if node else []
+        if len(pairs) < 2:
+            return None
+        inputs = dict(self.state.get("inputs") or {})
+        inputs[key] = (int(inputs.get(key, 0)) + 2) % (2 * len(pairs))
+        self.state["inputs"] = inputs
+        self.save_settings()
+        self.scan_now = True
+        return pairs[inputs[key] // 2]
+
+    def input_label(self, key, node):
+        pairs = self.input_pairs(node)
+        if not pairs:
+            return None
+        return "IN " + pairs[min(int((self.state.get("inputs") or {}).get(key, 0)) // 2, len(pairs) - 1)]
+
+    def capture_ports_of(self, key, node):
+        """(left, right) ports for Record parts: the chosen pair, or the source's own stereo pair"""
+        pair = self.input_pair(key, node)
+        if pair:
+            return pair
+        ports = node.get("ports") or []
+        return (ports[0], ports[1]) if len(ports) == 2 else ("capture_FL", "capture_FR")
 
     def set_mix_level(self, key, level):
         level = max(0, min(MIX_MAX, int(level)))       # over 100: a quiet source (a keyboard's synth) boosted
@@ -964,11 +1075,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                     ("clock", "Clock", self.state["clock_mode"]), ("arp_on", "Arp", onoff(keys["arp_on"])),
                     ("chord_on", "Chord", onoff(keys["chord_on"])), ("click", "Click level", self.state["click"])]
         if self.settings_menu == "audio":
-            names = {"a": "FM-1 A level" if self.source_b else "FM-1 level", "b": "FM-1 B level",
-                     "usb": "USB keys level"}
-            keys = list(dict.fromkeys("usb" if k.startswith("usb") else k for k, _ in self.mix_channels()))
-            mix = [(f"mix_{k}", names[k], ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
-                   for k in keys] if len(self.mix_channels()) > 1 else []
+            channels = self.mix_channels()
+            mix = [(f"mix_{k}", f"{self.channel_name(k, n)} level",
+                    ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
+                   for k, n in channels] if len(channels) > 1 else []
             parts = [("rec_parts", "Record parts", onoff(self.state["rec_parts"]))] if mix else []
             return ([("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
                     + mix + parts)
@@ -1487,7 +1597,8 @@ def main():
         # MIDI gets its own process, forked before any thread exists (App.run lowers the drawing
         # thread's priority so the kernel runs MIDI and audio first)
         import blemidi
-        midi = blemidi.MidiProcess(state["source_match"], state["midi_enabled"])
+        midi = blemidi.MidiProcess(state["source_match"], state["midi_enabled"],
+                                   net=box["build"] == "desk")         # network MIDI (a DAW): the desk box
         midi.start()
         midi.set_clock(state["clock_mode"], state["bpm"])
         midi.set_routes(state["routes"])

@@ -1,8 +1,9 @@
 """The desk box's touch screens (480x320), in SLOOP's style and FM-1 A's colours (sloopstyle.py).
 
 A tab bar along the bottom: HOME (the sources, tempo, record / start / tap), MIX (a slider a source, and the
-speaker), MIDI (the routes: tap to switch one), METER (the meters, larger) and MORE (what isn't redrawn for touch
-yet: those open the pocket box's screens, scaled up, with on-screen keys; backing out of them comes back here).
+speaker), MIDI (the routes: tap to switch one), METER (the meters, larger), DAW (a Mackie Control surface for a
+DAW on a computer, such as Kraken, over network MIDI: netmidi.py) and MORE (what isn't redrawn for touch yet:
+those open the pocket box's screens, scaled up, with on-screen keys; backing out of them comes back here).
 
 Drawing and touches run on the app's own thread (touches arrive through App.post): DeskUI calls the same App
 methods the keys and the web page call. Widgets are rebuilt with every frame: (box, kind, action, key, long),
@@ -21,7 +22,9 @@ import sloopstyle as st
 
 W, H = 480, 320
 TAB_H, HDR_H = 44, 34
-TABS = ("HOME", "MIX", "MIDI", "METER", "MORE")
+TABS = ("HOME", "MIX", "MIDI", "METER", "DAW", "MORE")
+DAW_KEYS = [("<<", "rewind"), (">>", "forward"), ("STOP", "stop"), ("PLAY", "play"), ("REC", "record"),
+            ("LOOP", "loop")]
 MORE = [("RECORDINGS", ("pick", "recording")), ("SAMPLE EDITOR", ("pick", "editor")),
         ("SLOOP", ("menu", "sloop")), ("FM-1", ("menu", "fm1")), ("PLAYING", ("menu", "play")),
         ("AUDIO", ("menu", "audio")), ("MIDI SETTINGS", ("menu", "midi")), ("THEME", ("theme", None))]
@@ -35,6 +38,7 @@ class DeskUI:
         self.widgets, self.held, self.shown = [], None, None
         self.theme, self.theme_seen, self.theme_check = st.Theme(), None, 0.0
         self.more_top = 0
+        self.daw_local = {}                       # strip -> (fader value, when): ours, until the DAW's catches up
         import deskmeters
         self.meters = deskmeters.DeskMeters()     # the meters' own pictures and smoothing
 
@@ -66,16 +70,15 @@ class DeskUI:
     # ---- what shows
 
     def sources(self):
-        """[(mix key, label, detail, track colour index)] of the sound sources there are"""
+        """[(mix key, label, detail, track colour index)] of the sound sources there are: the FM-1s, then any USB
+        audio by its own name (detail: the input pair it takes, for an interface with more than two channels)"""
         a = self.app
         out = []
-        for key, node in a.mix_channels():
-            if key == "a":
-                out.append(("a", "FM-1 A" if a.source_b else "FM-1", a.fw_label or "FM-1", 0))
-            elif key == "b":
-                out.append(("b", "FM-1 B", a.fw_label or "FM-1", 1))
+        for i, (key, node) in enumerate(a.mix_channels()):
+            if key in ("a", "b"):
+                out.append((key, a.channel_name(key), a.fw_label or "FM-1", 0 if key == "a" else 1))
             else:
-                out.append(("usb", "USB KEYS", (node.get("label") or "USB")[:12], 2))
+                out.append((key, a.channel_name(key, node), a.input_label(key, node) or "USB", 2 + i % 2))
         return out
 
     def view(self, now):
@@ -89,6 +92,9 @@ class DeskUI:
             base += (json.dumps(a.routes(), sort_keys=True), tuple(a.matrix_lists()[0]))
         if self.tab == "METER":
             base += (a.view(now),)
+        if self.tab == "DAW":
+            base += (json.dumps(getattr(a.midi, "mcu", None)), tuple(getattr(a.midi, "net", None) or ()),
+                     json.dumps(sorted(self.daw_local.items())))
         return base
 
     def render(self, now, force=False):
@@ -183,14 +189,17 @@ class DeskUI:
         right = self.status_right()
         st.text(img, (W - 10 - st.text_size(right)[0], 9), right, t.c[3])
         d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
-        rows = [(key, label, detail, k, a.mix_level(key) / 200) for key, label, detail, k in self.sources()]
+        sources = self.sources()
+        rows = [(key, label, detail, k, a.mix_level(key) / 200) for key, label, detail, k in sources[:3]]
         speaker = a.sink["label"].upper()[:14] if a.sink else (a.state.get("last_name") or "NONE").upper()[:14]
+        if len(sources) > 3:                  # more sources than rows: the rest are on MIX
+            speaker = f"{speaker[:9]}  +{len(sources) - 3} ON MIX"
         rows.append(("spk", "SPEAKER", speaker, 3, (a.volume or 0) / 100))
         y = HDR_H + 4
         for key, label, detail, k, level in rows[:4]:
             tile = (8, y, 48, y + 38)
             d.rectangle(tile, fill=t.dim[k])
-            letter = {"a": "A", "b": "B", "usb": "U", "spk": ">"}[key]
+            letter = {"a": "A", "b": "B", "spk": ">"}.get(key, label[:1])
             st.text(img, (tile[0] + 12, y + 3), letter, t.track[k], 2)
             st.text(img, (58, y + 2), label, t.hi)
             st.text(img, (58 + st.text_size(label)[0] + 10, y + 2), detail.upper(), t.track[k])
@@ -212,8 +221,9 @@ class DeskUI:
         a, t = self.app, self.theme
         parts = "ON" if a.state.get("rec_parts") else "OFF"
         self.header(img, d, "MIXER", self.status_right())
-        cols = [(key, label, k, a.mix_level(key), 200) for key, label, _, k in self.sources()]
+        cols = [(key, label, k, a.mix_level(key), 200) for key, label, _, k in self.sources()][:6]
         cols.append(("spk", "SPKR", 3, a.volume or 0, 100))
+        nodes = dict(a.mix_channels())
         if len(self.sources()) > 1:          # Record parts: only with more than one source
             box = (150, 4, 290, HDR_H - 6)
             self.button(img, d, box, f"PARTS {parts}", self.toggle_parts, on=a.state.get("rec_parts"))
@@ -224,18 +234,25 @@ class DeskUI:
             if i:
                 d.line((x0, HDR_H, x0, H - TAB_H), fill=t.c[0], width=2)
             cx = x0 + width // 2
+            label = label[:max(3, width // 8 - 1)]
             st.text(img, (cx - st.text_size(label)[0] // 2, HDR_H + 5), label, t.track[k])
-            d.rectangle((cx - 4, top, cx + 4, bottom), fill=t.c[0])
+            pair = a.input_label(key, nodes[key]) if key in nodes and key.startswith("u-") else None
+            if pair and len(a.input_pairs(nodes[key])) > 1:      # an interface: tap for its next input pair
+                box = (x0 + 4, top - 8, x0 + width - 5, top + 12)
+                self.button(img, d, box, pair[3:], lambda key=key: a.next_input_pair(key), key=("pair", key))
+                top_k = top + 18
+            else:
+                top_k = top
+            d.rectangle((cx - 4, top_k, cx + 4, bottom), fill=t.c[0])
             frac = max(0.0, min(1.0, value / most))
-            y = bottom - int((bottom - top) * frac)
+            y = bottom - int((bottom - top_k) * frac)
             d.rectangle((cx - 4, y, cx + 4, bottom), fill=t.track[k])
             hot = self.lit(("slide", key))
             d.rectangle((cx - 28, y - 9, cx + 28, y + 9), fill=t.hi if hot else t.track[k], outline=t.bg, width=2)
             v = f"{int(value)}%"
             st.text(img, (cx - st.text_size(v)[0] // 2, bottom + 8), v, t.hi)
-            self.widget((x0, top - 10, x0 + width - 1, bottom + 10), "slide",
-                        lambda f, key=key, most=most, top=top, bottom=bottom: self.slide(key, f, most),
-                        ("slide", key))
+            self.widget((x0, top_k - 10, x0 + width - 1, bottom + 10), "slide",
+                        lambda f, key=key, most=most: self.slide(key, f, most), ("slide", key))
 
     def slide(self, key, frac, most):
         value = int(round(frac * most / (5 if key != "spk" else 2))) * (5 if key != "spk" else 2)
@@ -317,6 +334,98 @@ class DeskUI:
         a = self.app
         a.meter_key("down" if step > 0 else "up", False)
 
+    # ---- DAW: a Mackie Control surface (Kraken, or any DAW that takes one) over network MIDI
+
+    def draw_daw(self, img, d, now):
+        import netmidi
+        a, t = self.app, self.theme
+        mcu = getattr(a.midi, "mcu", None)
+        computers = getattr(a.midi, "net", None) or []
+        st.text(img, (10, 9), "DAW", t.hi)
+        st.text(img, (50, 9), (computers[0][:22] if computers else "NOT CONNECTED"), t.c[3] if mcu else t.c[2])
+        d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
+        if not mcu:
+            lines = ["PLAY KRAKEN FROM HERE:", "",
+                     "1. ON THE COMPUTER, OPEN NETWORK MIDI", "   (MAC: AUDIO MIDI SETUP; WINDOWS: RTPMIDI)",
+                     "2. CONNECT A SESSION TO", "   FM-1 COMPANION MCU",
+                     "3. IN KRAKEN, SET THAT PORT TO MACKIE", "",
+                     "FM-1 COMPANION (NO MCU) IS FOR MUSIC:", "IT IS NET IN THE MIDI ROUTES."]
+            for i, line in enumerate(lines):
+                st.text(img, (14, HDR_H + 8 + i * 20), line, t.hi if i == 0 else t.c[3])
+            return
+        self.button(img, d, (W - 108, 3, W - 58, HDR_H - 5), "<",
+                    lambda: a.midi.mcu_send([netmidi.Mackie.press(0x2E)]), key="bank-")
+        self.button(img, d, (W - 54, 3, W - 4, HDR_H - 5), ">",
+                    lambda: a.midi.mcu_send([netmidi.Mackie.press(0x2F)]), key="bank+")
+        leds = set(mcu.get("leds") or [])
+        names, values = mcu["lcd"][0], mcu["lcd"][1]
+        width = W // 8
+        top, bottom = HDR_H + 50, HDR_H + 150
+        rings, meter = mcu.get("rings") or [0] * 8, mcu.get("meters") or [0] * 8
+        for n in range(8):
+            x0, cx = n * width, n * width + width // 2
+            if n:
+                d.line((x0, HDR_H, x0, HDR_H + 196), fill=t.c[0], width=1)
+            name = names[n * 7:n * 7 + 6].strip()
+            selected = 24 + n in leds
+            colour = t.track[n % 4]
+            name_box = (x0 + 2, HDR_H + 4, x0 + width - 3, HDR_H + 24)
+            if selected:
+                d.rectangle(name_box, fill=colour)
+            st.text(img, (cx - st.text_size(name)[0] // 2, HDR_H + 6), name, t.bg if selected else colour)
+            self.widget(name_box, "tap", lambda n=n: a.midi.mcu_send([netmidi.Mackie.press(24 + n)]), ("sel", n))
+            pan_box = (x0 + 4, HDR_H + 28, x0 + width - 5, HDR_H + 42)       # pan: tap left or right of the middle
+            d.rectangle(pan_box, fill=t.grey[0])
+            d.line((cx, pan_box[1], cx, pan_box[3]), fill=t.c[1])
+            if rings[n]:
+                px = pan_box[0] + 3 + (pan_box[2] - pan_box[0] - 6) * (rings[n] - 1) // 10
+                d.rectangle((px - 3, pan_box[1] + 2, px + 3, pan_box[3] - 2), fill=colour)
+            self.widget((pan_box[0], pan_box[1], cx - 1, pan_box[3]), "tap",
+                        lambda n=n: a.midi.mcu_send([netmidi.Mackie.pan(n, -2)]), ("pan-", n))
+            self.widget((cx, pan_box[1], pan_box[2], pan_box[3]), "tap",
+                        lambda n=n: a.midi.mcu_send([netmidi.Mackie.pan(n, 2)]), ("pan+", n))
+            local = self.daw_local.get(n)
+            value = local[0] if local and now - local[1] < 1.0 else mcu["faders"][n]
+            d.rectangle((cx - 3, top, cx + 3, bottom), fill=t.c[0])
+            y = bottom - int((bottom - top) * value / 16383)
+            d.rectangle((cx - 3, y, cx + 3, bottom), fill=colour)
+            for k in range(12):                       # the DAW's level meter, beside the fader
+                my = bottom - (k + 1) * (bottom - top) // 12
+                lit = k < meter[n]
+                level_colour = t.track[3] if k >= 11 else t.track[2] if k >= 9 else t.track[1]
+                d.rectangle((x0 + width - 9, my + 1, x0 + width - 5, my + (bottom - top) // 12 - 1),
+                            fill=level_colour if lit else t.c[0])
+            hot = self.lit(("fader", n))
+            d.rectangle((cx - 22, y - 8, cx + 22, y + 8), fill=t.hi if hot else colour, outline=t.bg, width=2)
+            self.widget((x0, top - 10, x0 + width - 1, bottom + 10), "slide",
+                        lambda f, n=n: self.daw_fader(n, f), ("fader", n))
+            v = values[n * 7:n * 7 + 6].strip()
+            st.text(img, (cx - st.text_size(v)[0] // 2, bottom + 12), v, t.c[3])
+            for i, (label, note) in enumerate((("S", 8 + n), ("M", 16 + n))):
+                box = (x0 + 4 + i * (width // 2 - 2), bottom + 32, x0 + (i + 1) * (width // 2 - 2), bottom + 52)
+                self.button(img, d, box, label, lambda note=note: a.midi.mcu_send([netmidi.Mackie.press(note)]),
+                            color=t.track[2] if label == "S" else t.track[3], on=note in leds, key=("sm", note))
+        kw = (W - 16) // len(DAW_KEYS)
+        y = H - TAB_H - 40
+        for i, (label, what) in enumerate(DAW_KEYS):
+            note = netmidi.Mackie.BUTTONS[what]
+            colour = (255, 112, 92) if what == "record" else None
+            self.button(img, d, (8 + i * kw, y, 8 + (i + 1) * kw - 6, y + 34), label,
+                        lambda note=note: a.midi.mcu_send([netmidi.Mackie.press(note)]),
+                        color=colour, on=note in leds, key=("daw", what))
+
+    def grab(self, key, down):
+        """a finger landing on (down) or lifting from a slider: on the DAW tab's faders, Mackie's touch notes"""
+        if isinstance(key, tuple) and key[0] == "fader":
+            import netmidi
+            self.app.midi.mcu_send([netmidi.Mackie.press(netmidi.Mackie.TOUCH + key[1], down)])
+
+    def daw_fader(self, n, frac):
+        import netmidi
+        value = int(frac * 16383)
+        self.daw_local[n] = (value, time.monotonic())
+        self.app.midi.mcu_send([netmidi.Mackie.fader(n, value)])
+
     # ---- MORE: what opens the pocket box's screens
 
     def draw_more(self, img, d, now):
@@ -380,6 +489,7 @@ class DeskUI:
                     self.held = w + (now,)            # box, kind, action, key, long, when
                     break
             if self.held and self.held[1] == "slide":
+                self.grab(self.held[3], True)
                 self.slide_to(y)
         elif kind == "move" and self.held:
             if self.held[1] == "slide":
@@ -390,6 +500,8 @@ class DeskUI:
         elif kind == "up" and self.held:
             held, self.held = self.held, None
             box = held[0]
+            if held[1] == "slide":
+                self.grab(held[3], False)
             if held[1] == "tap" and box[0] <= x <= box[2] and box[1] <= y <= box[3]:
                 if held[4] and now - held[5] >= 0.6:
                     held[4]()

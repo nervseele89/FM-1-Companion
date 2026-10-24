@@ -391,10 +391,10 @@ PARTS_MAP = ("FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR")     # positions th
 
 
 def link_parts(sources):
-    """[source node names] -> their FL/FR into the parts recorder's channels, in pairs, by one pw-cli (each new
-    connection to PipeWire costs a Zero W 1-2 s of CPU: pw-link would be one per link)"""
-    lines = [f"create-link {node} capture_{side} {PARTS_NODE} input_{PARTS_MAP[2 * i + j]} {{ object.linger = true }}"
-             for i, node in enumerate(sources) for j, side in enumerate(("FL", "FR"))]
+    """[(source node name, left port, right port)] -> into the parts recorder's channels, in pairs, by one pw-cli
+    (each new connection to PipeWire costs a Zero W 1-2 s of CPU: pw-link would be one per link)"""
+    lines = [f"create-link {node} {port} {PARTS_NODE} input_{PARTS_MAP[2 * i + j]} {{ object.linger = true }}"
+             for i, (node, *ports) in enumerate(sources) for j, port in enumerate(ports)]
     try:
         subprocess.run(["pw-cli"], input="\n".join(lines + ["quit"]) + "\n", text=True, timeout=20,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -595,7 +595,7 @@ class MeterScreens:
                 return
             keys = [key for key, _ in channels]
             self.parts_job = {"path": path, "keys": keys, "levels": {k: self.mix_level(k) for k in keys}}
-            sources = [node["name"] for _, node in channels]
+            sources = [(node["name"], *self.capture_ports_of(key, node)) for key, node in channels]
             threading.Thread(target=lambda: (time.sleep(1.5), link_parts(sources)), daemon=True).start()
             return
         if not self.recorder.start(self.capture_target(), path, self.state["audio_rate"]):

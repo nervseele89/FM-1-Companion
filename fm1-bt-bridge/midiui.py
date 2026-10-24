@@ -12,9 +12,10 @@ import time
 
 import blemidi
 
-SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "FM-1": "FM-1", "FM-1 B": "FM-1 B", "Box": "Box clock"}
-SHORT_NAMES = {"BT": "BT", "USB": "USB", "FM-1": "FM-1 A", "FM-1 B": "FM-1 B", "Box": "Clock"}   # five rows
-SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB"}
+SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "NET": "Network", "FM-1": "FM-1", "FM-1 B": "FM-1 B",
+                "Box": "Box clock"}
+SHORT_NAMES = {"BT": "BT", "USB": "USB", "NET": "NET", "FM-1": "FM-1 A", "FM-1 B": "FM-1 B", "Box": "Clock"}
+SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB", "NET": "NET"}
 VELOCITY = ["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
 CHANNELS = ["same"] + list(range(16)) + ["custom"]      # all to one channel (0-15), or a table
 CYCLES = {"chord": list(blemidi.CHORDS), "arp": list(blemidi.ARPS), "arp_rate": list(blemidi.ARP_RATES),
@@ -53,10 +54,12 @@ class MidiScreens:
         return bool(getattr(self.midi, "usb_b", None))
 
     def matrix_lists(self):
-        """(sources, destinations) on the matrix: FM-1 B's row and column only while a second FM-1 is in"""
-        if self.two_fm1s():
-            return blemidi.SOURCES, blemidi.DESTINATIONS
-        return ([s for s in blemidi.SOURCES if s != "FM-1 B"], [d for d in blemidi.DESTINATIONS if d != "FM-1 B"])
+        """(sources, destinations) on the matrix: FM-1 B's row and column only while a second FM-1 is in, NET's
+        while a computer is connected over network MIDI (the desk box)"""
+        hide = set() if self.two_fm1s() else {"FM-1 B"}
+        if not getattr(self.midi, "net", None):
+            hide.add("NET")
+        return ([s for s in blemidi.SOURCES if s not in hide], [d for d in blemidi.DESTINATIONS if d not in hide])
 
     def cell(self):
         sources, dests = self.matrix_lists()
