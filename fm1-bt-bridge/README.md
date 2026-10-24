@@ -371,7 +371,7 @@ itself, whatever it runs). Recordings has its own row on Settings.
   backup, no new file is kept. The newest 20 automatic backups are kept; the ones you make, and those
   made before a restore, a load or an install, are never deleted.
 
-**From your phone or computer:** with Wi-Fi on (Settings → Wi-Fi), open **http://fm1bridge.local**
+**From your phone or computer:** over Wi-Fi (Settings → Wi-Fi) or an Ethernet cable, open **http://fm1bridge.local**
 (or the Pi's IP address). The page lists the library and does everything the box does, plus:
 - **upload** WAVs, firmware (`.fwsc`), backups and project files; **download** backups, and any
   project of a backup as its own project file to share;

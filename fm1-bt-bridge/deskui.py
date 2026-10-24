@@ -1,11 +1,13 @@
 """The desk box's touch screens (480x320), in SLOOP's style and FM-1 A's colours (sloopstyle.py).
 
-A tab bar along the bottom: HOME (the sources, tempo, record / start / tap), MIX (a slider a source, and the
-speaker), MIDI (the routes: tap to switch one), METER (the meters, larger), DAW (a Mackie Control surface for a
-DAW on a computer, such as Kraken, over network MIDI: netmidi.py) and MORE (recordings, the sample editor, Sloop,
-FM-1, settings, the theme, shut down). Nothing of the Pocket's screens shows here: settings, lists,
-confirmations, jobs and the rest are the Studio's own pages (deskpages.py), and the sample editor has a touch
-screen of its own (draw_editor: drag the markers).
+A tab bar along the bottom: HOME (the sources, tempo, record / start / tap), MIXER (tab "MIX": a slider a
+source, and the speaker; METERS opens the meters, larger), SAMPLER (tab "PADS": the MPC-style sampler, its
+sequencer, punch-in FX and sample editor: deskpads.py, pads.py, padfx.py), RECORDER (tab "REC": the reel-to-reel
+meter, REC / STOP, Record parts, the takes), MIDI (the routes: tap to switch one; DAW opens a Mackie Control
+surface for a DAW on a computer, such as Kraken, over network MIDI: netmidi.py) and MORE (Sloop, FM-1, settings,
+the theme, shut down). Nothing of the Pocket's screens shows here: settings, lists, confirmations, jobs and the
+rest are the Studio's own pages (deskpages.py), and the sample editor has a touch screen of its own
+(draw_editor: drag the markers), opened from PADS > BROWSE or a pad's TRIM.
 
 Drawing and touches run on the app's own thread (touches arrive through App.post): DeskUI calls the same App
 methods the keys and the web page call. Widgets are rebuilt with every frame: (box, kind, action, key, long),
@@ -22,28 +24,34 @@ from PIL import Image, ImageDraw
 import blemidi
 import library
 import sloopstyle as st
+from deskpads import DeskPads
 from deskpages import HOLD, DeskPages
 
 W, H = 480, 320
 TAB_H, HDR_H = 44, 34
-TABS = ("HOME", "MIX", "MIDI", "METER", "DAW", "MORE")
+TABS = ("HOME", "MIX", "PADS", "REC", "MIDI", "MORE")
+TAB_LABEL = {"MIX": "MIXER", "PADS": "SAMPLER", "REC": "RECORDER"}   # what a tab says, if not its name
+METER_TABS = ("METER", "REC")                   # tabs with live audio levels (the meters' reader runs)
+PARENT = {"METER": "MIX", "DAW": "MIDI"}        # pages opened from a tab: it stays lit under them
 DAW_KEYS = [("<<", "rewind"), (">>", "forward"), ("STOP", "stop"), ("PLAY", "play"), ("REC", "record"),
             ("LOOP", "loop")]
-MORE = [("RECORDINGS", ("pick", "recording")), ("SAMPLE EDITOR", ("pick", "editor")),
-        ("SLOOP", ("menu", "sloop")), ("FM-1", ("menu", "fm1")), ("PLAYING", ("menu", "play")),
+MORE = [("SLOOP", ("menu", "sloop")), ("FM-1", ("menu", "fm1")), ("PLAYING", ("menu", "play")),
         ("AUDIO", ("menu", "audio")), ("MIDI SETTINGS", ("menu", "midi")), ("WI-FI", ("wifi", None)),
-        ("THEME", ("theme", None)), ("SHUT DOWN", ("off", None))]
+        ("THEME", ("theme", None)), ("TOUCH SETUP", ("calibrate", None)), ("SHUT DOWN", ("off", None))]
 THEMES = ["FOLLOW FM-1 A"] + st.NAMES
+HIDDEN_METERS = ("Tuner",)                      # meters the Studio leaves out (the Pocket keeps all eleven)
 
 
-class DeskUI(DeskPages):
+class DeskUI(DeskPages, DeskPads):
     def __init__(self, app, display):
         self.app, self.display = app, display
         self.tab, self.classic = "HOME", False      # (classic: never, now; desk.Touch still asks)
         self.page_init()
+        self.pads_init()
         self.widgets, self.held, self.shown = [], None, None
         self.theme, self.theme_seen, self.theme_check = st.Theme(), None, 0.0
         self.more_top = 0
+        self.cal = None                           # calibrating the touch: the raw readings so far (desk.Touch)
         self.daw_local = {}                       # strip -> (fader value, when): ours, until the DAW's catches up
         self.ed_view, self.ed_wave, self.ed_drag = None, None, None   # the editor's zoom, its waveform, a marker
         import deskmeters
@@ -72,7 +80,17 @@ class DeskUI(DeskPages):
                     except ValueError:
                         self.theme = st.Theme()
                 self.display.theme = self.theme
+                self.remember_theme()
         return self.theme
+
+    def remember_theme(self):
+        """the theme for the next boot's screen (deskboot.py): kept in the settings, and its picture written"""
+        import deskboot
+        saved = st.theme_dict(self.theme)
+        if self.app.state.get("boot_theme") != saved:
+            self.app.state["boot_theme"] = saved
+            self.app.save_settings()
+        deskboot.save(self.theme)
 
     # ---- what shows
 
@@ -90,21 +108,27 @@ class DeskUI(DeskPages):
 
     def view(self, now):
         a = self.app
+        if self.cal is not None:
+            return ("cal", len(self.cal), self.theme.name, a.message if now < a.message_until else None)
         if a.screen in self.PAGES:
             return ("page", self.page_view(now), self.theme.name, id(self.theme),
                     a.message if now < a.message_until else None, a.busy)
-        if a.screen == "editor" and a.ed:
+        if a.screen == "editor":
             return ("editor", self.held and self.held[3], self.theme.name, id(self.theme), self.ed_view,
-                    a.editor_view(), a.message if now < a.message_until else None)
+                    a.editor_view(), a.message if now < a.message_until else None, self.ed_files, self.browse,
+                    self.browse_top, self.ed_to_pad)
         rec = a.recording_tick(now) if hasattr(a, "recording_tick") else None
         base = (self.tab, self.held and self.held[0], self.theme.name, id(self.theme), rec, a.live(), a.volume,
                 json.dumps(a.state.get("mix")), a.state.get("rec_parts"), str(a.battery), a.clock_text(),
+                a.jack and a.jack["name"], a.state.get("phones"), tuple(a.cued()), a.state.get("cue_mix"),
                 a.message if now < a.message_until else None, tuple(self.sources()),
                 a.sink and a.sink["label"], a.state.get("desk_theme"), self.more_top)
         if self.tab == "MIDI":
             base += (json.dumps(a.routes(), sort_keys=True), tuple(a.matrix_lists()[0]))
-        if self.tab == "METER":
+        if self.tab in METER_TABS:
             base += (a.view(now),)
+        if self.tab == "PADS":
+            base += self.pads_view()
         if self.tab == "DAW":
             base += (json.dumps(getattr(a.midi, "mcu", None)), tuple(getattr(a.midi, "net", None) or ()),
                      json.dumps(sorted(self.daw_local.items())))
@@ -119,7 +143,7 @@ class DeskUI(DeskPages):
             self.open_tab("MIDI")
         elif a.screen == "settings" and a.settings_menu is None:
             a.screen = "status"
-            self.open_tab("MORE")
+            self.open_tab(self.tab if self.tab == "PADS" else "MORE")   # back where the list was opened from
 
     def render(self, now, force=False):
         self.current_theme(now)
@@ -134,13 +158,16 @@ class DeskUI(DeskPages):
         self.shown = view
         img = Image.new("RGB", (W, H), self.theme.bg)
         self.widgets = []
-        if self.app.screen == "editor" and self.app.ed:     # the sample editor: a screen of its own, no tabs
+        if self.cal is not None:                            # calibrating the touch: the targets, nothing else
+            self.draw_calibration(img, ImageDraw.Draw(img))
+        elif self.app.screen == "editor":                   # the sample editor: a screen of its own, no tabs
             self.draw_editor(img, ImageDraw.Draw(img), now)
         elif self.app.screen in self.PAGES:                  # settings, lists, confirmations, jobs: no tabs
             self.draw_page(img, ImageDraw.Draw(img), now)
         else:
             getattr(self, "draw_" + self.tab.lower())(img, ImageDraw.Draw(img), now)
-            self.draw_tabs(img)
+            if not self.pads_screen():                       # a pad's page, kits, sampling: full screen
+                self.draw_tabs(img)
         a = self.app
         if a.busy:
             self.draw_message(img, a.busy + "." * (int(now * 2) % 4))
@@ -150,19 +177,61 @@ class DeskUI(DeskPages):
 
     # ---- pieces
 
+    # ---- touch calibration: four targets, tapped in turn (desk.Touch hands over the raw readings)
+
+    def calibrate(self):
+        self.cal, self.held = [], None
+        self.shown = None
+
+    def draw_calibration(self, img, d):
+        import desk
+        t = self.theme
+        i = len(self.cal)                         # no header: the targets sit in the corners
+        x = desk.CAL_INSET if i in (0, 2) else W - 1 - desk.CAL_INSET
+        y = desk.CAL_INSET if i in (0, 1) else H - 1 - desk.CAL_INSET
+        d.ellipse((x - 14, y - 14, x + 14, y + 14), outline=t.hi, width=3)
+        d.line((x - 22, y, x + 22, y), fill=t.hi, width=2)
+        d.line((x, y - 22, x, y + 22), fill=t.hi, width=2)
+        d.ellipse((x - 3, y - 3, x + 3, y + 3), fill=t.track[3])
+        self.centre(img, (0, H // 2 - 70, W, H // 2 - 30), f"TOUCH SETUP  {i + 1} OF 4", t.hi, 2)
+        self.centre(img, (0, H // 2 - 10, W, H // 2 + 20), "TAP THE CENTRE OF THE TARGET", t.c[4])
+        self.centre(img, (0, H // 2 + 20, W, H // 2 + 50), "A STYLUS OR A FINGERNAIL IS BEST", t.c[2])
+
+    def calibrated(self, rx, ry):
+        import desk
+        a = self.app
+        self.cal.append((rx, ry))
+        if len(self.cal) < 4:
+            return
+        cal = desk.calibration(self.cal)
+        if cal is None:
+            self.cal = []
+            a.say("Those taps didn't line up: again", 3)
+            return
+        self.cal = None
+        a.state["touch_cal"][:] = cal             # in place: the touch reader holds this list
+        a.save_settings()
+        a.say("Touch set up", 2)
+
     # ---- the sample editor: the take full width, markers to drag, big buttons for the rest
 
     def draw_editor(self, img, d, now):
         import meters
         a, t, ed = self.app, self.theme, self.app.ed
         self.button(img, d, (4, 3, 84, HDR_H - 5), "< BACK", self.editor_back, key="ed-back")
+        self.button(img, d, (90, 3, 170, HDR_H - 5), "OPEN", self.editor_files, on=self.ed_files or not ed,
+                    key="ed-open")
+        if self.ed_files or not ed:                # OPEN: the samples and takes to edit
+            st.text(img, (180, 9), "SAMPLE EDITOR: PICK A FILE", t.hi)
+            d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
+            return self.draw_files(img, d)
         if ed["loading"] or ed["error"]:
             text = "LOADING THE TAKE..." if ed["loading"] else "CAN'T OPEN IT: " + str(ed["error"])[:30]
-            st.text(img, (96, 9), ed["name"][:42], t.c[3])
+            st.text(img, (180, 9), ed["name"][:30], t.c[3])
             self.centre(img, (0, HDR_H, W, H), text, t.hi if ed["error"] else t.c[3])
             return
         length = ed["end"] - ed["start"]
-        st.text(img, (96, 9), Path(ed["name"]).stem[:30], t.c[3])
+        st.text(img, (180, 9), Path(ed["name"]).stem[:22], t.c[3])
         tag = f"{length:.2f}S"
         long = length > library.SLOT_SECONDS          # longer than a SLOOP slot holds
         tw = st.text_size(tag)[0]
@@ -225,10 +294,35 @@ class DeskUI(DeskPages):
         st.text(img, (322, y2 + 20), note + (" FOUND" if found else ""), t.hi)
         self.button(img, d, (436, y2, 476, y2 + 36), ">", lambda: a.editor_change("note", 1), key="ed-note+")
         playing = a.player.playing()
-        self.button(img, d, (4, y3, 236, y3 + 36), "STOP" if playing else "PLAY",
+        self.button(img, d, (4, y3, 156, y3 + 36), "STOP" if playing else "PLAY",
                     lambda: a.player.stop() if a.player.playing() else a.editor_preview(), on=playing,
                     key="ed-play")
-        self.button(img, d, (244, y3, 476, y3 + 36), "SAVE", a.editor_save, color=t.track[1], key="ed-save")
+        save = f"SAVE ON PAD {self.pad_trim + 1}" if self.pad_trim is not None else "SAVE"   # (a pad's trim)
+        self.button(img, d, (162, y3, 318, y3 + 36), save, a.editor_save, color=t.track[1], key="ed-save")
+        self.button(img, d, (324, y3, 476, y3 + 36), "TO PAD", self.choose_pad, color=t.track[0], key="ed-to-pad")
+        if self.ed_to_pad:                         # which pad: over the controls
+            self.draw_pad_choice(img, d, HDR_H + 134)
+
+    def choose_pad(self):
+        self.ed_to_pad = not self.ed_to_pad
+
+    def draw_pad_choice(self, img, d, top):
+        """the 16 pads, MPC order (pad 1 bottom left), to put the edit on one"""
+        t, kit = self.theme, self.app.kit()
+        d.rectangle((0, top, W, H), fill=t.bg)
+        st.text(img, (8, top + 2), "PUT IT ON PAD:", t.hi)
+        self.button(img, d, (W - 96, top, W - 4, top + 20), "CANCEL", self.choose_pad, key="ed-pad-cancel")
+        gw, gh = (W - 8) // 8, (H - top - 26) // 2
+        for i in range(16):
+            row, col = 1 - i // 8, i % 8
+            box = (4 + col * gw + 1, top + 24 + row * gh + 1, 4 + (col + 1) * gw - 2, top + 24 + (row + 1) * gh - 2)
+            colour = t.track[(3 - i // 4) % 4]
+            hot = self.lit(("ed-pad", i))
+            used = bool(kit["pads"][i]["sample"])
+            d.rectangle(box, fill=t.hi if hot else t.dim[(3 - i // 4) % 4] if used else t.grey[0], outline=colour,
+                        width=2)
+            self.centre(img, box, str(i + 1), t.bg if hot else colour)
+            self.widget(box, "tap", lambda i=i: self.to_pad(i), ("ed-pad", i))
 
 
     @staticmethod
@@ -285,8 +379,16 @@ class DeskUI(DeskPages):
         self.ed_view = None if width >= ed["seconds"] else (round(v0, 4), round(v0 + width, 4))
 
     def editor_back(self):
-        self.ed_view, self.ed_wave, self.ed_drag = None, None, None
+        if self.ed_files and self.app.ed:          # the OPEN list: back to the take
+            self.ed_files = False
+            return
+        self.ed_files = False
+        self.ed_view, self.ed_wave, self.ed_drag, self.ed_to_pad = None, None, None, False
+        back_to_pads = self.pad_trim is not None or self.ed_from_browse
+        self.trimmed()                             # a pad's sample trimmed: back on its pad
         self.app.editor_close()
+        if back_to_pads:                           # the sampler's: back to it (BROWSE, or the pad's page)
+            self.app.screen, self.tab, self.ed_from_browse = "status", "PADS", False
 
     def widget(self, box, kind, action, key=None, long=None):
         self.widgets.append((box, kind, action, key or box, long))
@@ -319,7 +421,17 @@ class DeskUI(DeskPages):
         w, h = st.text_size(label, size)
         st.text(img, ((box[0] + box[2] - w) // 2, (box[1] + box[3] - h) // 2), label,
                 t.bg if hot else (color or t.c[4]), size)
+        if box[3] <= HDR_H:                        # in the header: the touch area is its whole height and a bit
+            box = (box[0], 0, box[2], HDR_H + 4)   # (26 px drawn is a thin target on a resistive screen)
         self.widget(box, "tap", action, key)
+
+    def tempo_text(self):
+        """the tempo it plays at: the clock it follows, or the box's own ("120 BPM") with none to follow"""
+        a = self.app
+        text = a.clock_text() or ""
+        if not text or ("follow" in text and not getattr(a.midi, "clock", None)):
+            return f"{a.state['bpm']} BPM"
+        return text.replace("follow", "FOLLOW")
 
     def draw_tabs(self, img):
         t, d = self.theme, ImageDraw.Draw(img)
@@ -327,13 +439,16 @@ class DeskUI(DeskPages):
         d.rectangle((0, top, W, H), fill=t.bg)                # (whatever a screen drew past its bottom)
         d.line((0, top, W, top), fill=t.c[0], width=2)
         w = W // len(TABS)
-        for i, name in enumerate(TABS):
+        lit = PARENT.get(self.tab, self.tab)
+        for i, name in enumerate(TABS):              # SLOOP's way: the active tab's label bright, a line under it
             box = (i * w, top + 2, (i + 1) * w - 1, H - 1)
-            on = name == self.tab and not self.classic
+            on = name == lit and not self.classic
+            label = TAB_LABEL.get(name, name)
+            tw, th = st.text_size(label)
+            st.text(img, ((box[0] + box[2] - tw) // 2, (box[1] + box[3] - th) // 2 - 2), label,
+                    t.hi if on else t.c[2])
             if on:
-                d.rectangle(box, fill=t.hi)
-            tw, th = st.text_size(name)
-            st.text(img, ((box[0] + box[2] - tw) // 2, (box[1] + box[3] - th) // 2), name, t.bg if on else t.c[2])
+                d.rectangle((box[0] + 14, H - 7, box[2] - 14, H - 4), fill=t.track[i % 4])
             self.widget(box, "tap", lambda name=name: self.open_tab(name), ("tab", name))
 
     def draw_message(self, img, message):
@@ -346,11 +461,11 @@ class DeskUI(DeskPages):
 
     def open_tab(self, name):
         a = self.app
-        if a.screen == "meter" and name != "METER":
+        if a.screen == "meter" and name not in METER_TABS:
             a.screen = "status"
             a.levels.stop()
         self.tab, self.classic = name, False
-        if name == "METER":
+        if name in METER_TABS:
             a.screen = "meter"
 
     # ---- HOME: the sources like SLOOP's TRACKS page, then record / start / tap
@@ -367,7 +482,7 @@ class DeskUI(DeskPages):
         rows = [(key, label, detail, k, a.mix_level(key) / 200) for key, label, detail, k in sources[:3]]
         speaker = a.sink["label"].upper()[:14] if a.sink else (a.state.get("last_name") or "NONE").upper()[:14]
         if len(sources) > 3:                  # more sources than rows: the rest are on MIX
-            speaker = f"{speaker[:9]}  +{len(sources) - 3} ON MIX"
+            speaker = f"{speaker[:9]}  +{len(sources) - 3} ON MIXER"
         rows.append(("spk", "SPEAKER", speaker, 3, (a.volume or 0) / 100))
         y = HDR_H + 4
         for key, label, detail, k, level in rows[:4]:
@@ -379,7 +494,8 @@ class DeskUI(DeskPages):
             st.text(img, (58 + st.text_size(label)[0] + 10, y + 2), detail.upper(), t.track[k])
             d.rectangle((58, y + 26, W - 10, y + 31), fill=t.c[0])
             d.rectangle((58, y + 26, 58 + int((W - 68) * max(0.0, min(1.0, level))), y + 31), fill=t.track[k])
-            self.widget((0, y, W, y + 38), "tap", lambda: self.open_tab("MIX"), ("row", key))
+            self.widget((0, y, W, y + 38), "tap", self.pick_speaker if key == "spk" else
+                        (lambda: self.open_tab("MIX")), ("row", key))
             y += 42
         top = H - TAB_H - 62
         rec = a.recorder.recording()
@@ -389,6 +505,29 @@ class DeskUI(DeskPages):
                     on=a.playing)
         self.button(img, d, (342, top, 472, top + 54), "TAP", lambda: a.tap(time.monotonic()))
 
+    # ---- RECORDER: the reel-to-reel meter (the reels turn while it records), REC / STOP, Record parts, the takes
+
+    def draw_rec(self, img, d, now):
+        a, t = self.app, self.theme
+        rec = a.recorder.recording()
+        secs = a.recorder.seconds() if rec else None
+        st.text(img, (10, 9), "RECORDER", t.hi)
+        state = f"REC {int(secs) // 60}:{int(secs) % 60:02}" if rec else "READY" if a.source else "NO SOURCE"
+        st.text(img, (96, 9), state, (255, 112, 92) if rec else t.c[3])
+        if len(self.sources()) > 1:          # Record parts: each source on its own too
+            parts = a.state.get("rec_parts")
+            self.button(img, d, (W - 254, 4, W - 130, HDR_H - 6), f"PARTS {'ON' if parts else 'OFF'}",
+                        self.toggle_parts, on=parts, key="rec-parts")
+        right = f"{a.battery['percent']}%" if a.battery else ""
+        st.text(img, (W - 10 - st.text_size(right)[0], 9), right, t.c[3])
+        d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
+        self.meters.draw(a, img, (0, HDR_H + 1, W, H - TAB_H - 58), t, now, style="Tape")
+        top = H - TAB_H - 54
+        self.button(img, d, (8, top, 236, top + 48), "STOP" if rec else "REC", a.toggle_recording,
+                    color=(255, 112, 92), on=rec, key="rec-go")
+        self.button(img, d, (244, top, 472, top + 48), "TAKES", lambda: self.open_more(("pick", "recording")),
+                    key="rec-takes")
+
     # ---- MIX: a slider a source, and the speaker
 
     def draw_mix(self, img, d, now):
@@ -397,18 +536,25 @@ class DeskUI(DeskPages):
         self.header(img, d, "MIXER", self.status_right())
         cols = [(key, label, k, a.mix_level(key), 200) for key, label, _, k in self.sources()][:6]
         cols.append(("spk", "SPKR", 3, a.volume or 0, 100))
+        if a.jack:                           # the 3.5 mm jack
+            cols.append(("phones", "PHONES", 2, a.state.get("phones", 80), 100))
         nodes = dict(a.mix_channels())
         if len(self.sources()) > 1:          # Record parts: only with more than one source
-            box = (150, 4, 290, HDR_H - 6)
+            box = (110, 4, 230, HDR_H - 6)
             self.button(img, d, box, f"PARTS {parts}", self.toggle_parts, on=a.state.get("rec_parts"))
+        self.button(img, d, (236, 4, 330, HDR_H - 6), "METERS", lambda: self.open_tab("METER"), key="meters")
         width = W // len(cols)
-        top, bottom = HDR_H + 26, H - TAB_H - 30
+        top, bottom = HDR_H + 26, H - TAB_H - (64 if a.jack else 30)   # with a jack: CUE buttons underneath
+        blend = {0: "CUE", 25: "75/25", 50: "50/50", 75: "25/75", 100: "MAIN"}
         for i, (key, label, k, value, most) in enumerate(cols):
             x0 = i * width
             if i:
                 d.line((x0, HDR_H, x0, H - TAB_H), fill=t.c[0], width=2)
             cx = x0 + width // 2
-            label = label[:max(3, width // 8 - 1)]
+            room = max(3, width // 8 - 1)
+            if len(label) > room and label[-2:-1] == "#":         # a second one alike: its number kept
+                label = label[:room - 2].rstrip() + label[-2:]     # ("EP-13#2")
+            label = label[:room]
             st.text(img, (cx - st.text_size(label)[0] // 2, HDR_H + 5), label, t.track[k])
             pair = a.input_label(key, nodes[key]) if key in nodes and key.startswith("u-") else None
             if pair and len(a.input_pairs(nodes[key])) > 1:      # an interface: tap for its next input pair
@@ -427,11 +573,21 @@ class DeskUI(DeskPages):
             st.text(img, (cx - st.text_size(v)[0] // 2, bottom + 8), v, t.hi)
             self.widget((x0, top_k - 10, x0 + width - 1, bottom + 10), "slide",
                         lambda f, key=key, most=most: self.slide(key, f, most), ("slide", key))
+            box = (x0 + 6, H - TAB_H - 36, x0 + width - 7, H - TAB_H - 6)
+            if a.jack and key in nodes:      # a DJ mixer's cue: this source on the jack, before its fader
+                self.button(img, d, box, "CUE", lambda key=key: a.toggle_cue(key), color=t.track[k],
+                            on=key in a.cued(), key=("cue", key))
+            elif key == "phones":            # the jack's blend of the cued sources and the main mix
+                m = a.state.get("cue_mix", 50)
+                self.button(img, d, box, blend.get(m, f"{m}"), a.next_cue_mix, key="cue-mix")
 
     def slide(self, key, frac, most):
-        value = int(round(frac * most / (5 if key != "spk" else 2))) * (5 if key != "spk" else 2)
-        value = max(0, min(most, value))
-        if key == "spk":
+        step = 2 if key in ("spk", "phones") else 5
+        value = max(0, min(most, int(round(frac * most / step)) * step))
+        if key == "phones":
+            if value != self.app.state.get("phones"):
+                self.app.set_phones(value)
+        elif key == "spk":
             if self.app.sink and value != self.app.volume:
                 self.app.volume_to(value)
         elif value != self.app.mix_level(key):
@@ -445,18 +601,26 @@ class DeskUI(DeskPages):
 
     def draw_midi(self, img, d, now):
         a, t = self.app, self.theme
-        self.header(img, d, "ROUTES", "HOLD = EDIT")
+        self.header(img, d, "ROUTES")
+        st.text(img, (W - 196, 9), "HOLD = EDIT", t.c[3])
+        self.button(img, d, (W - 84, 3, W - 4, HDR_H - 5), "DAW", lambda: self.open_tab("DAW"),
+                    on=bool(getattr(a.midi, "mcu", None)), key="daw")
         sources, dests = a.matrix_lists()
         routes = a.routes()
         short = {"BT": "BT", "USB": "USB", "FM-1": "FM-1 A" if a.two_fm1s() else "FM-1", "FM-1 B": "FM-1 B",
-                 "Box": "CLOCK"}
-        dshort = {"FM-1": "A" if a.two_fm1s() else "FM-1", "FM-1 B": "B", "BT": "BT", "USB": "USB"}
-        colour = {"BT": 0, "USB": 2, "FM-1": 1, "FM-1 B": 1, "Box": 3}
+                 "Box": "CLOCK", "NET": "NET"}
+        dshort = {"FM-1": "A" if a.two_fm1s() else "FM-1", "FM-1 B": "B", "BT": "BT", "USB": "USB", "NET": "NET",
+                  "SMP": "SMP"}
+        colour = {"BT": 0, "USB": 2, "FM-1": 1, "FM-1 B": 1, "Box": 3, "NET": 2}
+        name = lambda e: e[len(blemidi.DEVICE):].upper() if e.startswith(blemidi.DEVICE) else e   # noqa: E731
+        short = {**{s: name(s)[:10] for s in sources}, **short}         # a USB device: its own name
+        dshort = {**{x: name(x) for x in dests}, **dshort}
+        colour = {s: colour.get(s, 2 if s.startswith(blemidi.DEVICE) else 0) for s in sources}
         left, top = 96, HDR_H + 26
         cw = (W - left - 8) // len(dests)
         rh = min(44, (H - TAB_H - top - 4) // len(sources))
         for j, dest in enumerate(dests):
-            s = dshort[dest]
+            s = dshort[dest][:max(3, cw // 8)]                          # (a device's name: as much as fits)
             st.text(img, (left + j * cw + (cw - st.text_size(s)[0]) // 2, HDR_H + 6), s, t.c[3])
         for i, src in enumerate(sources):
             y = top + i * rh
@@ -487,15 +651,17 @@ class DeskUI(DeskPages):
         a = self.app
         a.route_key, a.route_row, a.route_edit, a.screen = key, 0, None, "route"
 
-    # ---- METER: the eleven meters drawn for this screen (deskmeters.py); < > in the header, or tap the meter
+    # ---- METER: the meters drawn for this screen (deskmeters.py, but HIDDEN_METERS); < > in the header, or tap
 
     def draw_meter(self, img, d, now):
         a, t = self.app, self.theme
         from meters import METERS
-        name = METERS[a.meter_index()].upper()
-        st.text(img, (10, 9), f"{name}  {a.meter_index() + 1}/{len(METERS)}", t.hi)
-        right = self.status_right()
-        st.text(img, (W - 120 - st.text_size(right)[0], 9), right, t.c[3])
+        shown = [m for m in METERS if m not in HIDDEN_METERS]
+        if METERS[a.meter_index()] in HIDDEN_METERS:       # (left on one the Studio doesn't show: the next)
+            self.next_meter(1)
+        name = METERS[a.meter_index()]
+        self.button(img, d, (4, 3, 84, HDR_H - 5), "< MIXER", lambda: self.open_tab("MIX"), key="meter-back")
+        st.text(img, (94, 9), f"{name.upper()}  {shown.index(name) + 1}/{len(shown)}", t.hi)
         d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
         self.button(img, d, (W - 108, 3, W - 58, HDR_H - 5), "<", lambda: self.next_meter(-1), key="meter-")
         self.button(img, d, (W - 54, 3, W - 4, HDR_H - 5), ">", lambda: self.next_meter(1), key="meter+")
@@ -504,8 +670,13 @@ class DeskUI(DeskPages):
         self.widget(box, "tap", lambda: self.next_meter(1), "meter-area")
 
     def next_meter(self, step):
+        """the next (or previous) meter, past the ones the Studio leaves out"""
+        from meters import METERS
         a = self.app
-        a.meter_key("down" if step > 0 else "up", False)
+        for _ in range(len(METERS)):
+            a.meter_key("down" if step > 0 else "up", False)
+            if METERS[a.meter_index()] not in HIDDEN_METERS:
+                break
 
     # ---- DAW: a Mackie Control surface (Kraken, or any DAW that takes one) over network MIDI
 
@@ -514,8 +685,9 @@ class DeskUI(DeskPages):
         a, t = self.app, self.theme
         mcu = getattr(a.midi, "mcu", None)
         computers = getattr(a.midi, "net", None) or []
-        st.text(img, (10, 9), "DAW", t.hi)
-        st.text(img, (50, 9), (computers[0][:22] if computers else "NOT CONNECTED"), t.c[3] if mcu else t.c[2])
+        self.button(img, d, (4, 3, 84, HDR_H - 5), "< MIDI", lambda: self.open_tab("MIDI"), key="daw-back")
+        st.text(img, (94, 9), "DAW", t.hi)
+        st.text(img, (134, 9), (computers[0][:20] if computers else "NOT CONNECTED"), t.c[3] if mcu else t.c[2])
         d.line((0, HDR_H - 1, W, HDR_H - 1), fill=t.c[0], width=2)
         if not mcu:
             lines = ["PLAY KRAKEN FROM HERE:", "",
@@ -605,24 +777,30 @@ class DeskUI(DeskPages):
         t = self.theme
         self.header(img, d, "MORE", self.status_right())
         items = MORE
-        rows, rh = 5, 46
-        top = HDR_H + 4
-        shown = items[self.more_top:self.more_top + rows]
-        for i, (label, what) in enumerate(shown):
-            y = top + i * rh
-            box = (8, y, W - 64, y + rh - 4)
+        cols = 3                                   # tiles, three a row: everything on one screen, no scrolling
+        rows = (len(items) + cols - 1) // cols
+        top, bottom = HDR_H + 4, H - TAB_H - 4
+        tw, th = (W - 8) // cols, (bottom - top) // rows
+        for i, (label, what) in enumerate(items):
+            x, y = 4 + i % cols * tw, top + i // cols * th
+            box = (x + 2, y + 2, x + tw - 3, y + th - 3)
             hot = self.lit(("more", label))
-            d.rectangle(box, fill=t.hi if hot else t.grey[0])
+            off = what[0] == "off"
+            d.rectangle(box, fill=t.hi if hot else t.grey[0], outline=(255, 112, 92) if off else None,
+                        width=2 if off else 0)
             value = (self.theme_label() if what[0] == "theme" else
-                     ("ON" if self.app.wifi else "OFF") if what[0] == "wifi" else "" if what[0] == "off" else ">")
-            st.text(img, (box[0] + 12, y + 13), label, t.bg if hot else t.c[4])
-            st.text(img, (box[2] - 12 - st.text_size(value)[0], y + 13), value, t.bg if hot else t.c[3])
+                     ("ON" if self.app.wifi else "OFF") if what[0] == "wifi" else "")
+            dy = -8 if value else 0
+            self.centre(img, (box[0], box[1] + dy, box[2], box[3] + dy), label,
+                        t.bg if hot else (255, 112, 92) if off else t.c[4])
+            if value:
+                self.centre(img, (box[0], box[1] + 18, box[2], box[3] + 18), value, t.bg if hot else t.c[3])
             self.widget(box, "tap", lambda what=what: self.open_more(what), ("more", label))
-        if len(items) > rows:
-            self.button(img, d, (W - 56, top, W - 8, top + 2 * rh - 4), "^",
-                        lambda: self.scroll_more(-1), key="more-up")
-            self.button(img, d, (W - 56, top + 3 * rh, W - 8, top + 5 * rh - 4), "v",
-                        lambda: self.scroll_more(1), key="more-down")
+
+    def pick_speaker(self):
+        """HOME's SPEAKER row: the speakers and headphones to pair or connect"""
+        self.app.settings_menu, self.app.back_to = "audio", "status"
+        self.app.start_scan()
 
     def scroll_more(self, step):
         self.more_top = max(0, min(len(MORE) - 5, self.more_top + step * 3))
@@ -641,6 +819,9 @@ class DeskUI(DeskPages):
             a.save_settings()
             self.theme_check = 0.0
             return
+        if kind == "calibrate":
+            self.calibrate()
+            return
         if kind == "off":                          # the Studio has no power key: shut down, held to confirm
             a.ask("Shut down?", ["The Studio switches off.", "Recordings are finished first."], a.shutdown,
                   back="status")
@@ -658,7 +839,12 @@ class DeskUI(DeskPages):
     # ---- touch
 
     def touch(self, kind, x, y, now):
-        """a finger down, moving or up at (x, y) (screen pixels)"""
+        """a finger down, moving or up at (x, y) (screen pixels); calibrating: "raw" (the chip's own reading)"""
+        if self.cal is not None:
+            if kind == "raw":
+                self.calibrated(x, y)
+            self.shown = None
+            return
         if kind == "down":
             self.held = None
             for w in self.widgets:
@@ -669,6 +855,8 @@ class DeskUI(DeskPages):
             if self.held and self.held[1] == "slide":
                 self.grab(self.held[3], True)
                 self.slide_to(y)
+            elif self.held and self.held[1] == "gate":       # a pad: sounds from the touch until let go
+                self.held[2](True)
             elif self.held and self.held[1] == "drag":
                 self.held[2]("down", x, y)
         elif kind == "move" and self.held:
@@ -686,6 +874,8 @@ class DeskUI(DeskPages):
                 self.app.say("Hold to confirm", 1.5)
             if held[1] == "slide":
                 self.grab(held[3], False)
+            elif held[1] == "gate":
+                held[2](False)
             elif held[1] == "drag":
                 held[2]("up", x, y)
             if held[1] == "tap" and box[0] <= x <= box[2] and box[1] <= y <= box[3]:

@@ -62,6 +62,15 @@ DEFAULTS = {
     "build": "auto",        # "pocket" (Zero + OLED HAT), "desk" (Pi 3/4 + 3.5" touchscreen) or "auto" (device.py)
     "touch_cal": [3900, 200, 3900, 200, True],   # the desk touchscreen: raw x left/right, y top/bottom, swap
     "desk_theme": "follow",  # the desk box's colours: "follow" (FM-1 A's, as SLOOP shows them) or a SLOOP palette
+    "output": "both",       # the Studio's sound: "speaker" (Bluetooth), "phones" (the 3.5 mm jack) or "both"
+    "phones": 80,           # the jack's level (%)
+    "cue": False,           # the click and previews on the jack only, not the speaker
+    "cues": [],             # mixer keys cued to the jack, as on a DJ mixer: heard there before their fader
+    "cue_mix": 50,          # the jack's blend while something's cued: 0 the cued sources only, 100 the main mix
+    "boot_theme": None,     # the Studio's boot screen: the theme it last showed (deskboot.py)
+    "editor_last": None,    # the Studio's sample editor: the file last opened, [name, folder], opened again
+    "repeat": None,         # the pads' note repeat: a division (pads.DIVS index 0-5) or None: off
+    "kit": None,            # the Studio's pads: the kit in use (pads.clean_kit), kept here between kit saves
     "source_match": ["felucca", "sloop", "fm-1", "fm1", "m-vave"],
 }
 GPIO_CHIP = "/dev/gpiochip0"
@@ -215,7 +224,7 @@ def capture_ports(objects):
             continue
         props = (o.get("info") or {}).get("props") or {}
         name = str(props.get("port.name", ""))
-        if props.get("port.direction") == "out" and name.startswith("capture_"):
+        if props.get("port.direction") == "out" and name.startswith(("capture_", "output_")):
             ports.setdefault(props.get("node.id"), []).append((int(props.get("port.id", 0) or 0), name))
     return {node: [n for _, n in sorted(found)] for node, found in ports.items()}
 
@@ -256,10 +265,15 @@ def pick_nodes(objects, source_match, cards=()):
             path = re.search(r":(\d+)", str(props.get("api.alsa.path", "")))   # "front:3": sound card 3
             node["card"] = int(path.group(1)) if path else None
             node["ports"] = ports.get(o.get("id"), [])
+            clipper_keys = "clipper" in text.lower() and cards and node["card"] not in cards
             if any(m in text.lower() for m in source_match):
                 sources.append(node)
+            elif clipper_keys:                # Clipper next to a real FM-1: a keyboard's sound (sloop.fm1_cards)
+                fallbacks.append((False, node))
             elif ".usb-" in name:
                 fallbacks.append((any(i in text.lower() for i in ("1209", "pid.codes")), node))
+        elif cls == "Audio/Source" and name == "fm1-sampler":     # the Studio's pads (pads.py): a source too
+            fallbacks.append((False, dict(node, label="SAMPLER", ports=ports.get(o.get("id"), []))))
         elif cls == "Audio/Sink" and name.startswith("bluez_output."):
             sink = sink or node
     # no name matched: the FM-1's USB ID (1209:0001); anything else is a USB keyboard's own sound
@@ -339,6 +353,21 @@ def node_volume(objects, node_id):
     return None
 
 
+def jack_node(objects):
+    """the Pi's own 3.5 mm headphone jack (bcm2835 Headphones) as {"id", "name", "label"}, or None (the Zero
+    has none; HDMI sound is left out)"""
+    for o in objects:
+        if o.get("type") != "PipeWire:Interface:Node":
+            continue
+        props = (o.get("info") or {}).get("props") or {}
+        name = str(props.get("node.name", ""))
+        text = " ".join(str(props.get(k, "")) for k in ("node.name", "node.description", "alsa.card_name")).lower()
+        if (props.get("media.class") == "Audio/Sink" and name.startswith("alsa_output.")
+                and "hdmi" not in text and ("headphones" in text or "bcm2835" in text)):
+            return {"id": o.get("id"), "name": name, "label": "PHONES"}
+    return None
+
+
 def pw_nodes(source_match, watch):
     """-> (pick_nodes' answer, the objects), or None before PipeWire's picture is in (not "all unplugged")"""
     objects = watch.snapshot()
@@ -402,6 +431,7 @@ class Loopback:
     def __init__(self, rate=48000):
         self.proc, self.key = None, None
         self.rate, self.paused_until = rate, 0.0
+        self.links, self.started, self.relinked = None, 0.0, 0.0   # a chosen pair's links, to check (heal)
 
     def ensure(self, source, sink, name=None, pair=None):
         """name: the playback side's node name (a mixer channel's, to set its level there); pair: (left, right)
@@ -416,8 +446,12 @@ class Loopback:
         if key:
             set_rate(self.rate)
             inp = f"fm1-in-{name}" if name else "fm1-in"
-            capture = (f"node.name={inp} node.autoconnect=false node.dont-reconnect=true audio.position=[FL,FR]"
-                       if pair else f"target.object={source} node.dont-reconnect=true")
+            if pair:
+                capture = f"node.name={inp} node.autoconnect=false node.dont-reconnect=true audio.position=[FL,FR]"
+            elif source.startswith("monitor:"):       # what plays on a speaker (the jack's copy of it)
+                capture = f"target.object={source[8:]} stream.capture.sink=true node.dont-reconnect=true"
+            else:
+                capture = f"target.object={source} node.dont-reconnect=true"
             self.proc = subprocess.Popen(
                 ["pw-loopback",
                  "--capture-props", capture,
@@ -425,9 +459,37 @@ class Loopback:
                  + (f" node.name={name}" if name else "")],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             self.key = key
+            self.links, self.started = None, time.monotonic()
             if pair:                          # its two inputs to the chosen ports, once the loopback is there
                 links = [(source, pair[0], inp, "input_FL"), (source, pair[1], inp, "input_FR")]
+                self.links = links
                 threading.Thread(target=lambda: (time.sleep(1.0), link_ports(links)), daemon=True).start()
+
+    def heal(self, objects, now=None):
+        """a chosen pair's links made again if they're missing (PipeWire's objects, as pw-dump has them): the
+        first try, a second after start, can come before the loopback is there (a busy start: a restart, a
+        replug), and nothing else would try again. At most every 5 s, from 2 s after start."""
+        now = time.monotonic() if now is None else now
+        if not self.links or not self.running() or now - self.started < 2 or now - self.relinked < 5:
+            return False
+        name = self.links[0][2]
+        node = next((o.get("id") for o in objects if o.get("type") == "PipeWire:Interface:Node"
+                     and ((o.get("info") or {}).get("props") or {}).get("node.name") == name), None)
+        if node is None:
+            return False
+        made = [o for o in objects if o.get("type") == "PipeWire:Interface:Link"
+                and (o.get("info") or {}).get("input-node-id") == node]
+        states = [(o.get("info") or {}).get("state") for o in made]
+        # one side active and the other stuck (seen: the right channel's link "paused" while the left played, the
+        # meters showing one side): that one made again. (Both paused is just nothing playing: left alone.)
+        stuck = [o for o, state in zip(made, states) if state != "active"] if "active" in states else []
+        if len(made) >= len(self.links) and not stuck:
+            return False
+        self.relinked = now
+        for o in stuck:
+            run(["pw-cli", "destroy", str(o.get("id"))], timeout=5)
+        link_ports(self.links)
+        return True
 
     def running(self):
         return self.proc is not None and self.proc.poll() is None
@@ -470,8 +532,8 @@ class Mixer:
     Zero W another hop of delay and CPU: playing felt laggy, the controls slow.) An FM-1 keeps the clock, the
     others are re-timed to it (WirePlumber gives USB inputs the slack for that: wireplumber-51-fm1-bridge.conf)."""
 
-    def __init__(self, rate=48000):
-        self.sink, self.rate = None, rate
+    def __init__(self, rate=48000, prefix="fm1-mix-"):
+        self.sink, self.rate, self.prefix = None, rate, prefix   # prefix: its playback nodes' names
         self.channels, self.levels = {}, {}   # key -> Loopback to the speaker; node id -> level last set
         self.paused_until = 0.0
 
@@ -491,14 +553,14 @@ class Mixer:
         for key, (source, pair) in wanted.items():
             loop = self.channels.setdefault(key, Loopback(self.rate))
             loop.rate = self.rate
-            loop.ensure(source, sink, f"fm1-mix-{key}", pair)
+            loop.ensure(source, sink, f"{self.prefix}{key}", pair)
 
     def set_levels(self, objects, levels):
         """levels: {key: percent}, set on the channels' nodes once pw-dump shows them"""
         for o in objects:
             props = (o.get("info") or {}).get("props") or {}
             name = str(props.get("node.name", ""))
-            key = name[len("fm1-mix-"):] if name.startswith("fm1-mix-") else None
+            key = name[len(self.prefix):] if name.startswith(self.prefix) else None
             if key in levels and self.levels.get(o.get("id")) != levels[key]:
                 run(["wpctl", "set-volume", str(o["id"]), f"{levels[key] / 100:.2f}"], timeout=5)
                 self.levels[o.get("id")] = levels[key]
@@ -725,8 +787,13 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         self.bt_lock = threading.Lock()       # one bluetoothctl operation at a time
         self.loop = Loopback(state["audio_rate"])
         self.mixer = Mixer(state["audio_rate"])        # a second FM-1, or a USB keyboard's sound: mixed
+        self.jack, self.jack_set = None, None  # the Studio's 3.5 mm jack (jack_node); (node id, level) last set
+        self.jack_loop = Loopback(state["audio_rate"])  # output "both": the speaker's sound copied to the jack
+        self.cue_mixer = Mixer(state["audio_rate"], "fm1-cue-")   # sources cued to the jack, each its own loopback
+        self.copy_set = None                  # (node id, level) last set on the jack's copy of the main mix
         self.box = {"build": "pocket", "board": "", "screen": None, "can": set()}   # main() fills it in
         self.desk = None                      # the desk box's touch screens (deskui.DeskUI), from main()
+        self.pads = None                      # the Studio's sampler (pads.PadProcess), from main()
         self.metro_sent = None                # what the MIDI process was last told about the metronome
         self.source = self.sink = self.source_b = None
         self.others = []                      # other USB sound: a keyboard's own synth
@@ -798,7 +865,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.auto_backup()
             self.identify_fm1()
             self.web_publish()
-            metro = (self.state["metronome"], self.sink and self.sink["name"], self.state["click"],
+            metro = (self.state["metronome"], self.cue_target(), self.state["click"],
                      self.state["audio_rate"])
             if self.midi and metro != self.metro_sent:      # the metronome runs in the MIDI process
                 self.midi.set_metronome(*metro)
@@ -819,6 +886,12 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         if found is None:
             return                            # couldn't look: keep everything as it is
         (source, sink, source_b, others), objects = found
+        if jack_node(objects) != self.jack:
+            self.jack = jack_node(objects)
+            self.post("status", True)
+        if self.jack and self.jack_set != (self.jack["id"], self.state["phones"]):
+            run(["wpctl", "set-volume", str(self.jack["id"]), f"{self.state['phones'] / 100:.2f}"], timeout=5)
+            self.jack_set = (self.jack["id"], self.state["phones"])
         volume = node_volume(objects, sink["id"]) if sink else None
         if sink and volume is None:
             volume = get_volume(sink["id"])
@@ -829,19 +902,83 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.source, self.sink, self.source_b, self.others, self.volume = source, sink, source_b, others, volume
             self.post("status", changed)
         channels = self.mix_channels()
+        main, copy = self.outputs()
+        self.jack_loop.ensure(copy and "monitor:" + main, copy, "fm1-phones")
+        cued = [(key, node["name"], self.input_pair(key, node)) for key, node in channels if key in self.cued()]
+        self.cue_mixer.ensure(self.jack and self.jack["name"], cued)
+        cue_level, main_level = self.cue_levels()
+        self.cue_mixer.set_levels(objects, {key: cue_level for key, _, _ in cued})
+        copy_id = next((o.get("id") for o in objects
+                        if ((o.get("info") or {}).get("props") or {}).get("node.name") == "fm1-phones"), None)
+        if copy_id is not None and self.copy_set != (copy_id, main_level):
+            run(["wpctl", "set-volume", str(copy_id), f"{main_level / 100:.2f}"], timeout=5)
+            self.copy_set = (copy_id, main_level)
         if len(channels) > 1:                 # more than one source: through the mixer, each at its level
             self.loop.ensure(None, None)
-            self.mixer.ensure(sink and sink["name"], [(key, node["name"], self.input_pair(key, node))
+            self.mixer.ensure(main, [(key, node["name"], self.input_pair(key, node))
                                                       for key, node in channels if self.mix_level(key) > 0])
             self.mixer.set_levels(objects, {key: self.mix_level(key) for key, _ in channels})
+            for loop in list(self.mixer.channels.values()) + list(self.cue_mixer.channels.values()):
+                loop.heal(objects)            # an interface's chosen pair, linked again if it got lost
             self.mix_lost = 0
         elif self.mixer.running() and self.mix_lost < 1:
             self.mix_lost += 1                # a source gone: sure only on the next look (no dropout for nothing)
-        else:                                 # the FM-1 alone: straight to the speaker, as ever
+        else:                                 # one source (the FM-1, as ever): straight to the speaker
             self.mixer.stop()
             self.mix_lost = 0
-            self.loop.ensure(source and source["name"], sink and sink["name"])
+            only = channels[0][1] if channels else None
+            self.loop.ensure(only and only["name"], main)
         self.heal_pipewire(source)
+
+    def outputs(self):
+        """(the node name the sound goes to, a second one that gets a copy of it, or None): the Bluetooth
+        speaker, the Studio's 3.5 mm jack, or both (the speaker's sound copied to the jack: no Bluetooth delay
+        on it). Either one alone when the other isn't there."""
+        bt, jack = self.sink and self.sink["name"], self.jack and self.jack["name"]
+        out = self.state.get("output", "both")
+        if (out == "phones" and jack) or not bt:
+            return jack, None
+        if jack and (out == "both" or self.cued()):    # cueing: the main mix too, for the blend
+            return bt, jack
+        return bt, None
+
+    def cued(self):
+        """the mixer keys cued to the jack that are plugged in (none without a jack)"""
+        here = {key for key, _ in self.mix_channels()}
+        return [key for key in self.state.get("cues") or [] if key in here] if self.jack else []
+
+    def cue_levels(self):
+        """(the cued sources' level, the main mix's level) on the jack, in %: the blend, as a DJ mixer's
+        cue/main knob (the middle: both full); with nothing cued, the main mix full"""
+        if not self.cued():
+            return 100, 100
+        m = self.state.get("cue_mix", 50)
+        return min(100, 2 * (100 - m)), min(100, 2 * m)
+
+    def toggle_cue(self, key):
+        cues = list(self.state.get("cues") or [])
+        self.state["cues"] = [k for k in cues if k != key] if key in cues else cues + [key]
+        self.save_settings()
+        self.scan_now = True
+
+    def next_cue_mix(self):
+        steps = [0, 25, 50, 75, 100]
+        m = self.state.get("cue_mix", 50)
+        self.state["cue_mix"] = steps[(steps.index(m) + 1) % len(steps)] if m in steps else 50
+        self.save_settings()
+        self.scan_now = True
+
+    def cue_target(self):
+        """where the click and previews play: the jack only when "cue" is on (the speaker doesn't hear them),
+        else wherever the sound goes"""
+        if self.state.get("cue") and self.jack:
+            return self.jack["name"]
+        return self.outputs()[0]
+
+    def set_phones(self, level):
+        self.state["phones"] = max(0, min(100, int(level)))
+        self.save_settings()
+        self.scan_now = True
 
     def mix_channels(self):
         """[(key, node)] of the sound sources there are: "a", "b" (the FM-1s), then any other USB audio (a
@@ -857,7 +994,24 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             return "FM-1 B"
         if node is None:
             node = dict(self.mix_channels()).get(key) or {}
-        return str(node.get("label") or "USB").upper()[:10]
+        label = str(node.get("label") or "USB")
+        alike = [n for n in self.others if str(n.get("label") or "USB") == label]
+        if len(alike) > 1:                    # two of the same device: "EP-136", "EP-136 #2"
+            n = next((i for i, o in enumerate(alike) if o.get("id") == node.get("id")), 0)
+            return label.upper()[:7] + (f" #{n + 1}" if n else "")
+        return label.upper()[:10]
+
+    def kit(self):
+        """the Studio's kit in use"""
+        import pads
+        return pads.clean_kit(self.state.get("kit") or pads.empty_kit())
+
+    def set_kit(self, kit):
+        import pads
+        self.state["kit"] = pads.clean_kit(kit)
+        self.save_settings()
+        if self.pads:
+            self.pads.send("kit", self.state["kit"])
 
     def mix_level(self, key):
         mix = self.state.get("mix") or {}
@@ -1081,8 +1235,10 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
                     ("± " if self.editing == f"mix_{k}" else "") + f"{self.mix_level(k)}%")
                    for k, n in channels] if len(channels) > 1 else []
             parts = [("rec_parts", "Record parts", onoff(self.state["rec_parts"]))] if mix else []
-            return ([("speaker", "Speaker", speaker), ("audio", "BT audio", audio), ("rate", "Audio rate", rate)]
-                    + mix + parts)
+            jack = ([("output", "Output", self.state["output"]), ("cue", "Click to phones", onoff(self.state["cue"]))]
+                    if self.jack else [])           # the Studio's 3.5 mm jack
+            return ([("speaker", "Speaker", speaker), ("audio", "BT audio", audio)] + jack
+                    + [("rate", "Audio rate", rate)] + mix + parts)
         if self.settings_menu == "midi":
             keys = getattr(self.midi, "controllers", None) or []
             return [("midi", "BLE MIDI", midi), ("pairing", "Pairing", f"open {int(left)}s" if left > 0 else "closed"),
@@ -1103,12 +1259,24 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
             self.start_scan()                 # pick and pair a speaker or headphones
         elif key == "audio":
             self.disconnect() if self.sink else self.reconnect()
+        elif key == "output":
+            outs = ["both", "speaker", "phones"]
+            now_out = self.state["output"]
+            self.state["output"] = outs[(outs.index(now_out) + 1) % 3] if now_out in outs else "both"
+            self.save_settings()
+            self.scan_now = True
+        elif key == "cue":
+            self.state["cue"] = not self.state["cue"]
+            self.save_settings()
+            self.say("Click and previews: phones only" if self.state["cue"] else "Click and previews: everywhere", 2)
         elif key == "rate":
             rate = 44100 if self.state["audio_rate"] == 48000 else 48000
             self.state["audio_rate"] = rate
             self.save_settings()
             self.loop.reopen(rate)
             self.mixer.reopen(rate)
+            self.jack_loop.reopen(rate)
+            self.cue_mixer.reopen(rate)
             self.say(f"{rate / 1000:g} kHz: audio restarts")
         elif key == "clock":
             self.set_clock("box" if self.state["clock_mode"] == "follow" else "follow")
@@ -1117,7 +1285,7 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         elif key == "metronome":
             self.state["metronome"] = not self.state["metronome"]
             self.save_settings()
-            if self.state["metronome"] and not self.sink:
+            if self.state["metronome"] and not self.cue_target():
                 self.say("Metronome: connect a speaker")
         elif key == "rec_parts":
             self.state["rec_parts"] = not self.state["rec_parts"]
@@ -1180,6 +1348,17 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         beat = (self.taps[-1] - self.taps[0]) / (len(self.taps) - 1)
         self.set_clock("box", 60 / beat)
         self.say(f"Box clock {self.state['bpm']} BPM", 1.5)
+
+    def seq_play(self):
+        """the sequencer's PLAY / STOP: the box's transport. With no clock to follow, the box becomes the
+        clock (its tempo), so the Studio sequences on its own"""
+        if self.midi and self.state["clock_mode"] != "box" and not getattr(self.midi, "clock", None):
+            self.set_clock("box")
+        self.start_stop()
+
+    def seq_playing(self):
+        clock = getattr(self.midi, "clock", None)
+        return bool(self.playing if self.state["clock_mode"] == "box" else clock and clock.get("playing"))
 
     def start_stop(self):
         if not self.midi:
@@ -1528,12 +1707,18 @@ class App(LibraryScreens, MeterScreens, MidiScreens, SampleEditor, WebLink):
         while True:
             try:
                 # 4 Hz: the MIDI dot and countdowns; 10 Hz for the meters
-                event = self.events.get(timeout=0.1 if self.screen == "meter" and self.mode != "saver" else 0.25)
+                metering = self.screen == "meter" and self.mode != "saver"     # (the Studio: 20 frames a second)
+                event = self.events.get(timeout=0.1 if metering else 0.25)
             except queue.Empty:
                 event = None
             self.web_commands()                       # the web page's settings (a file check: cheap)
             if event and event[0] in KEYS:
                 self.on_key(event[0], len(event) > 1 and event[1])
+            elif event and event[0] == "pad_seq":       # live REC changed the pattern (the pad process has it)
+                kit = self.kit()
+                kit["seq"] = event[1]
+                self.state["kit"] = kit
+                self.save_settings()
             elif event and event[0] == "touch" and self.desk:   # the desk UI's screens (desk.Touch)
                 self.last_activity = time.monotonic()
                 self.desk.touch(*event[1:], time.monotonic())
@@ -1589,24 +1774,49 @@ def main():
         test_screen(display)
         time.sleep(15)
         return
-    splash(display)
+    boot = None
+    if box["build"] == "desk" and not sim:    # the Studio's boot screen, a step at a time until HOME
+        import deskboot
+        boot = deskboot.theme(state)
+        deskboot.show(display, boot, 0)
+    else:
+        splash(display)
     midi = None
     if not sim:
         # MIDI gets its own process, forked before any thread exists (App.run lowers the drawing
         # thread's priority so the kernel runs MIDI and audio first)
         import blemidi
+        pad_process = None
+        if box["build"] == "desk":            # the Studio's sampler, in a process of its own (pads.py)
+            import pads
+            pad_process = pads.PadProcess(state["audio_rate"])
+            pad_process.start()
+            deskboot.show(display, boot, 1)
         midi = blemidi.MidiProcess(state["source_match"], state["midi_enabled"],
-                                   net=box["build"] == "desk")         # network MIDI (a DAW): the desk box
+                                   net=box["build"] == "desk",          # network MIDI (a DAW): the Studio
+                                   pads=pad_process and pad_process.midi_conn)
         midi.start()
         midi.set_clock(state["clock_mode"], state["bpm"])
         midi.set_routes(state["routes"])
+    if boot:
+        deskboot.show(display, boot, 2)
+    state["touch_cal"] = list(state["touch_cal"])   # its own list: calibrating changes it in place
     app = App(display, state)
     app.midi, app.box = midi, box
+    if not sim and box["build"] == "desk":
+        app.pads = pad_process
+        app.pads.send("kit", app.kit())
+        app.pads.send("repeat", state["repeat"])
+        app.pads.on_seq = lambda seq: app.post("pad_seq", seq)
+        app.pads.on_step = lambda step: app.post("pad_step", step)     # (wakes the screen: the playhead)
     if not sim and box["build"] == "desk":    # its own touch screens; the classic ones' on-screen keys
         import deskui
         app.desk = deskui.DeskUI(app, display)
         app.keys = desk.start_touch(KeyTimer(app.post), display, state["touch_cal"], ui=app.desk,
                                     ui_touch=lambda kind, x, y: app.post("touch", kind, x, y))
+        if app.keys and state["touch_cal"] == DEFAULTS["touch_cal"]:
+            app.desk.calibrate()              # first start: the four targets before anything else
+        deskboot.show(display, boot, 3)       # (HOME, drawn with the first look, replaces it)
     elif not sim:
         flip = state["flip_joystick"]
         if flip is None:                      # follow the screen: rotate 0 is upside down to Waveshare's labels
@@ -1617,6 +1827,8 @@ def main():
     finally:
         app.recorder.stop()
         app.loop.stop()
+        app.jack_loop.stop()
+        app.cue_mixer.stop()
 
 
 if __name__ == "__main__":

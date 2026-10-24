@@ -273,9 +273,9 @@ class LibraryScreens:
     def recording_action(self, name, action):
         path = library.folder("recordings") / name
         if action == "play":
-            if not self.sink:
+            if not self.cue_target():
                 self.say("No speaker connected")
-            elif self.player.start(self.sink["name"], path):
+            elif self.player.start(self.cue_target(), path):
                 self.player_name, self.screen = name, "player"
             else:
                 self.say("Can't play (pw-play?)")

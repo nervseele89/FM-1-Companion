@@ -5,6 +5,9 @@ input device).
 Step one: the app's own 128x64 screens, three times larger and in colour, with big buttons under them for
 the joystick and KEY1-3. Taps on the buttons become the same key events the pocket box's keys make (KeyTimer:
 holds and repeats included), so every screen works on the desk box from the start.
+
+HdmiMirror: the Studio's screen on a monitor or projector on the Pi's HDMI port too (its framebuffer, /dev/fb0
+under KMS), scaled up by a whole number, only while one is plugged in, at most MIRROR_FPS.
 """
 
 import select
@@ -90,6 +93,126 @@ def rgb565(img):
     return (((a[..., 0] >> 3) << 11) | ((a[..., 1] >> 2) << 5) | (a[..., 2] >> 3)).astype("<u2").tobytes()
 
 
+MIRROR_FPS = 10
+
+
+class HdmiMirror:
+    """the touchscreen's frames, copied to the HDMI framebuffer: the largest whole-number scale that fits,
+    centred on black. Its own thread, the newest frame only: the touchscreen never waits for it."""
+
+    def __init__(self, device, size, bpp, stride, status=None):
+        self.device, self.size, self.bpp, self.stride, self.status = device, size, bpp, stride, status
+        self.frame, self.event = None, threading.Event()
+        self.scale = max(1, min(size[0] // W, size[1] // H))
+        self.at = ((size[0] - W * self.scale) // 2, (size[1] - H * self.scale) // 2)
+        self.connected, self.checked, self.cleared = False, 0.0, False
+
+    @classmethod
+    def find(cls, skip="/dev/fb1", graphics=Path("/sys/class/graphics"), drm=Path("/sys/class/drm")):
+        """the HDMI framebuffer (a KMS one, not the touchscreen's fbtft), or None"""
+        for fb in sorted(graphics.glob("fb[0-9]*")):
+            device = "/dev/" + fb.name
+            try:
+                name = (fb / "name").read_text().strip().lower()
+                if device == skip or "fb_" in name or "ili" in name:       # (fbtft's: "fb_ili9486")
+                    continue
+                size = tuple(int(v) for v in (fb / "virtual_size").read_text().strip().split(","))
+                bpp = int((fb / "bits_per_pixel").read_text())
+                stride = int((fb / "stride").read_text()) if (fb / "stride").exists() else size[0] * bpp // 8
+            except (OSError, ValueError):
+                continue
+            if bpp in (16, 32) and size[0] >= W and size[1] >= H:
+                status = next(iter(sorted(drm.glob("card*-HDMI-A-*/status"))), None)
+                return cls(device, size, bpp, stride, status)
+        return None
+
+    def start(self):
+        threading.Thread(target=self.run, daemon=True).start()
+        return self
+
+    def show(self, rgb):
+        """an (H, W, 3) uint8 array: the newest frame"""
+        self.frame = rgb
+        self.event.set()
+
+    def plugged(self, now):
+        if now - self.checked >= 5:             # (a monitor plugged in later: within 5 s)
+            self.checked = now
+            try:
+                was, self.connected = self.connected, self.status is None or \
+                    self.status.read_text().strip() == "connected"
+            except OSError:
+                was, self.connected = self.connected, False
+            if self.connected and not was:
+                self.cleared = False
+        return self.connected
+
+    def pixels(self, rgb):
+        import numpy as np
+        big = rgb.repeat(self.scale, axis=0).repeat(self.scale, axis=1)
+        if self.bpp == 16:
+            a = big.astype(np.uint16)
+            return (((a[..., 0] >> 3) << 11) | ((a[..., 1] >> 2) << 5) | (a[..., 2] >> 3)).astype("<u2")
+        out = np.zeros(big.shape[:2] + (4,), dtype=np.uint8)            # XRGB8888: B, G, R, X in memory
+        out[..., 0], out[..., 1], out[..., 2] = big[..., 2], big[..., 1], big[..., 0]
+        return out
+
+    def write(self, f, rgb):
+        if not self.cleared:                    # the first frame on this monitor: black around it
+            f.seek(0)
+            f.write(bytes(self.stride * self.size[1]))
+            self.cleared = True
+        px = self.pixels(rgb)
+        row = px.shape[1] * self.bpp // 8
+        x = self.at[0] * self.bpp // 8
+        for y in range(px.shape[0]):
+            f.seek((self.at[1] + y) * self.stride + x)
+            f.write(px[y].tobytes()[:row])
+
+    def run(self):
+        try:
+            f = open(self.device, "r+b", buffering=0)
+        except OSError:
+            return
+        with f:
+            while True:
+                self.event.wait()
+                self.event.clear()
+                if self.frame is not None and self.plugged(time.monotonic()):
+                    try:
+                        self.write(f, self.frame)
+                    except OSError:
+                        return
+                time.sleep(1 / MIRROR_FPS)
+
+
+def spi_hz(config=Path("/boot/firmware/config.txt")):
+    """the touchscreen's SPI clock, from its dtoverlay's speed= (16 MHz without one)"""
+    try:
+        for line in config.read_text().splitlines():
+            if line.startswith("dtoverlay=") and ("piscreen" in line or "waveshare35" in line):
+                for part in line.split(","):
+                    if part.startswith("speed="):
+                        return int(part[6:])
+    except (OSError, ValueError):
+        pass
+    return 16_000_000
+
+
+def changed_strips(changed, gap=8):
+    """a row a bool (changed) -> [(top, bottom)] of the strips of changed rows; strips under gap rows apart are
+    one (a write each costs more than a few rows)"""
+    strips = []
+    for row, hit in enumerate(changed):
+        if not hit:
+            continue
+        if strips and row - strips[-1][1] < gap:
+            strips[-1][1] = row + 1
+        else:
+            strips.append([row, row + 1])
+    return [tuple(s) for s in strips]
+
+
 class TftDisplay:
     """The app's display (show, contrast, power) on the touchscreen's framebuffer. Only what changed is
     written: the picture's band of rows on a redraw, the buttons' rows when one is pressed (SPI moves a whole
@@ -102,8 +225,12 @@ class TftDisplay:
         self.bases = {}                       # (pressed button, theme) -> the whole screen with no picture in it
         self.theme = None                     # the desk UI's colours (sloopstyle.Theme), for the classic screens
         self.last = None                      # the desk UI's last frame, as RGB565 rows (show_rgb)
-        with self.lock:
-            self.write(0, H)
+        self.hz, self.busy_until = spi_hz(), 0.0   # the SPI link; when the last frame is all on the screen
+        self.mirror = HdmiMirror.find(skip=device)        # a monitor on HDMI shows it too
+        if self.mirror:
+            self.mirror.start()
+        # (nothing drawn yet: the boot screen, deskboot.py, is already there, and the app's first frame replaces
+        # it; the classic screens draw their whole screen with the first show())
 
     def base(self):
         key = (self.pressed, id(self.theme))
@@ -114,26 +241,37 @@ class TftDisplay:
     def show(self, img):
         """a pocket-box screen (128x64, 1 bit): scaled up, with the on-screen keys"""
         with self.lock:
-            self.frame = img.copy()
-            full, self.last = self.last is not None, None
+            full = self.last is not None or not getattr(self, "shown", False)
+            self.frame, self.last, self.shown = img.copy(), None, True
             self.write(0, H if full else SCREEN_AT[1] + 64 * SCALE + 4)
 
     def show_rgb(self, img):
-        """a whole desk UI frame (RGB 480x320): only the rows that changed since the last one are sent"""
+        """a whole desk UI frame (RGB 480x320): only the rows that changed since the last one are sent, each
+        changed strip on its own (a meter's two bars: not the scale between them). The driver sends the screen
+        what was written, so less written is more frames a second over its SPI link."""
         import numpy as np
-        a = np.asarray(img.convert("RGB"), dtype=np.uint16)
+        rgb = np.asarray(img.convert("RGB"))
+        a = rgb.astype(np.uint16)
         px = (((a[..., 0] >> 3) << 11) | ((a[..., 1] >> 2) << 5) | (a[..., 2] >> 3)).astype("<u2")
         with self.lock:
-            if self.last is None:
-                top, bottom = 0, H
-            else:
-                rows = np.flatnonzero(np.any(px != self.last, axis=1))
-                if not len(rows):
-                    return
-                top, bottom = int(rows[0]), int(rows[-1]) + 1
+            strips = [(0, H)] if self.last is None else changed_strips(np.any(px != self.last, axis=1))
+            if not strips:
+                return
+            # no new frame while the last is still going over the SPI link: the panel shows rows as they come,
+            # so writing over a frame mid-transfer tears it (a meter's bar half old, half new). The driver
+            # sends what was written up to 1/30 s later (fbtft's deferred I/O), then at the link's speed.
+            wait = self.busy_until - time.monotonic()
+            if wait > 0:
+                time.sleep(min(wait, 0.25))
             self.last = px
-            self.fb.seek(top * W * 2)
-            self.fb.write(px[top:bottom].tobytes())
+            if self.mirror:
+                self.mirror.show(rgb)
+            rows = 0
+            for top, bottom in strips:
+                self.fb.seek(top * W * 2)
+                self.fb.write(px[top:bottom].tobytes())
+                rows += bottom - top
+            self.busy_until = time.monotonic() + 1 / 30 + rows * W * 16 * 1.15 / self.hz
 
     def press(self, name):
         """light a button while it's held (None: none), redrawn at once"""
@@ -197,13 +335,36 @@ def to_screen(raw_x, raw_y, cal):
     return max(0, min(W - 1, round(x))), max(0, min(H - 1, round(y)))
 
 
+CAL_INSET = 30                          # the calibration targets: this far in from each corner
+
+
+def calibration(points, inset=CAL_INSET):
+    """the raw readings of a finger on the four targets (top left, top right, bottom left, bottom right) ->
+    touch_cal for to_screen, or None if they make no sense (the same spot tapped twice, say)"""
+    tl, tr, bl, br = points
+    across_x = abs(tr[0] + br[0] - tl[0] - bl[0])  # how much each raw axis changes left to right
+    across_y = abs(tr[1] + br[1] - tl[1] - bl[1])
+    swap = across_y > across_x                       # the chip's x runs up and down the screen
+    if swap:
+        tl, tr, bl, br = [(p[1], p[0]) for p in (tl, tr, bl, br)]
+    left, right = (tl[0] + bl[0]) / 2, (tr[0] + br[0]) / 2
+    top, bottom = (tl[1] + tr[1]) / 2, (bl[1] + br[1]) / 2
+    if abs(right - left) < 100 or abs(bottom - top) < 100:
+        return None
+    kx, ky = (right - left) / (W - 1 - 2 * inset), (bottom - top) / (H - 1 - 2 * inset)   # raw per pixel
+    x0, y0 = left - inset * kx, top - inset * ky
+    return [round(x0), round(x0 + kx * (W - 1)), round(y0), round(y0 + ky * (H - 1)), swap]
+
+
 class Touch:
     """A finger on the screen -> on a classic screen, KeyTimer presses and releases of the on-screen key under
-    it; on the desk UI's screens, ui_touch("down" / "move" / "up", x, y) (the app takes it on its own thread)."""
+    it; on the desk UI's screens, ui_touch("down" / "move" / "up", x, y) (the app takes it on its own thread).
+    While the desk UI calibrates (ui.cal is a list), a finger lifted is ui_touch("raw", raw x, raw y) instead."""
 
     def __init__(self, timer, display, cal, ui=None, ui_touch=None):
         self.timer, self.display, self.cal, self.ui, self.ui_touch = timer, display, cal, ui, ui_touch
         self.raw, self.down, self.held, self.was_down, self.point = [0, 0], False, None, False, None
+        self.raw_down = None                  # calibrating: the reading while the finger was down
 
     def event(self, kind, code, value, now):
         if kind == EV_ABS and code in (ABS_X, ABS_Y):
@@ -211,6 +372,13 @@ class Touch:
         elif kind == EV_KEY and code == BTN_TOUCH:
             self.down = bool(value)
         elif kind == EV_SYN:
+            if self.ui is not None and getattr(self.ui, "cal", None) is not None:
+                if self.down:
+                    self.raw_down = tuple(self.raw)
+                elif self.was_down and self.raw_down:
+                    self.ui_touch("raw", *self.raw_down)
+                self.was_down, self.point = self.down, None
+                return
             if self.ui is not None and not self.ui.classic and self.held is None:
                 point = to_screen(*self.raw, self.cal)
                 if self.down and not self.was_down:

@@ -15,7 +15,7 @@ import blemidi
 SOURCE_NAMES = {"BT": "Bluetooth", "USB": "USB keys", "NET": "Network", "FM-1": "FM-1", "FM-1 B": "FM-1 B",
                 "Box": "Box clock"}
 SHORT_NAMES = {"BT": "BT", "USB": "USB", "NET": "NET", "FM-1": "FM-1 A", "FM-1 B": "FM-1 B", "Box": "Clock"}
-SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB", "NET": "NET"}
+SHORT_DESTS = {"FM-1": "A", "FM-1 B": "B", "BT": "BT", "USB": "USB", "NET": "NET", "SMP": "SMP"}
 VELOCITY = ["normal", "soft", "hard"] + [f"fixed {v}" for v in (40, 64, 80, 100, 127)]
 CHANNELS = ["same"] + list(range(16)) + ["custom"]      # all to one channel (0-15), or a table
 CYCLES = {"chord": list(blemidi.CHORDS), "arp": list(blemidi.ARPS), "arp_rate": list(blemidi.ARP_RATES),
@@ -32,9 +32,22 @@ class MidiScreens:
 
     # ---- state
 
+    def usb_devices(self):
+        """the USB MIDI devices with a row and column each (the Studio), or None (the Pocket: USB, as one)"""
+        if not getattr(self.midi, "split", False):
+            return None
+        return list(getattr(self.midi, "controllers", None) or [])
+
     def routes(self):
+        """every route of the matrix as it is now (the USB devices plugged in)"""
         saved = self.state.get("routes") or {}
-        return {key: dict(blemidi.route_default(key), **saved.get(key, {})) for key in blemidi.ROUTES}
+        return {key: dict(blemidi.route_default(key), **saved.get(key, {}))
+                for key in blemidi.route_keys(self.usb_devices())}
+
+    def keep_routes(self, routes):
+        """the routes saved: these, and those of USB devices not plugged in now (kept for when they're back)"""
+        saved = self.state.get("routes") or {}
+        return {**{k: v for k, v in saved.items() if blemidi.DEVICE in k}, **routes}
 
     def route(self):
         return self.routes()[self.route_key]
@@ -45,7 +58,7 @@ class MidiScreens:
     def set_route_of(self, key, **changes):
         routes = self.routes()
         routes[key].update(changes)
-        self.state["routes"] = routes
+        self.state["routes"] = self.keep_routes(routes)
         self.save_settings()
         if self.midi:
             self.midi.set_routes(routes)
@@ -59,7 +72,10 @@ class MidiScreens:
         hide = set() if self.two_fm1s() else {"FM-1 B"}
         if not getattr(self.midi, "net", None):
             hide.add("NET")
-        return ([s for s in blemidi.SOURCES if s not in hide], [d for d in blemidi.DESTINATIONS if d not in hide])
+        if not getattr(self.midi, "pads", False):          # the sampler: the Studio's
+            hide.add("SMP")
+        sources, dests = blemidi.matrix(self.usb_devices())     # (the Studio: each USB device, by name)
+        return [s for s in sources if s not in hide], [d for d in dests if d not in hide]
 
     def cell(self):
         sources, dests = self.matrix_lists()
@@ -246,7 +262,9 @@ class MidiScreens:
 
     def route_title(self):
         source, dest = self.route_key.split(">")
-        name = (lambda n: "FM-1 A" if n == "FM-1" else n) if self.two_fm1s() else (lambda n: n)
+        two = self.two_fm1s()
+        name = lambda n: ("FM-1 A" if two and n == "FM-1" else n[len(blemidi.DEVICE):] if n.startswith(  # noqa
+            blemidi.DEVICE) else n)
         return f"{name(source)} > {name(dest)}"
 
     def midi_view(self):

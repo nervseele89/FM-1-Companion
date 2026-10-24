@@ -99,7 +99,7 @@ class SampleEditor:
 
     def editor_preview(self):
         ed = self.ed
-        if not self.sink:
+        if not self.cue_target():
             self.say("No speaker connected")
             return
         try:
@@ -109,7 +109,7 @@ class SampleEditor:
         except (OSError, ValueError) as e:
             self.say(str(e)[:32])
             return
-        if not self.player.start(self.sink["name"], path):
+        if not self.player.start(self.cue_target(), path):
             self.say("Can't play (pw-play?)")
 
     def editor_save(self):
@@ -120,6 +120,7 @@ class SampleEditor:
         except (OSError, ValueError) as e:
             self.say(str(e)[:32])
             return
+        ed["saved"] = out                      # (the Studio puts a trimmed pad's sample back on its pad)
         self.say(f"Saved {out.stem[:16]}", 2.5)
 
     # ---- drawing

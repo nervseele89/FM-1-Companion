@@ -22,13 +22,20 @@ def board(path=MODEL):
 
 
 def touchscreen(root=FRAMEBUFFERS):
-    """(framebuffer device, width, height) of a small SPI screen (fbtft: /dev/fb1, 480x320), or None"""
-    for fb in sorted(root.glob("fb[1-9]")):
+    """(framebuffer device, width, height) of a small SPI screen (480x320), or None: fbtft's (fb_ili9486) or the
+    kernel's DRM driver's (ili9486drmfb: the piscreen overlay's, Raspberry Pi OS from 2026), which is /dev/fb0
+    when no HDMI monitor was there at boot, else /dev/fb1"""
+    for fb in sorted(root.glob("fb[0-9]")):
         try:
             width, height = (int(v) for v in (fb / "virtual_size").read_text().strip().split(","))
         except (OSError, ValueError):
             continue
-        if width * height <= 800 * 480:      # not an HDMI monitor
+        try:
+            name = (fb / "name").read_text().strip().lower()
+        except OSError:
+            name = ""
+        spi = any(k in name for k in ("fb_", "ili94", "piscreen", "mipi-dbi"))
+        if spi or (fb.name != "fb0" and width * height <= 800 * 480):   # (fb0 unnamed: an HDMI monitor)
             return f"/dev/{fb.name}", width, height
     return None
 

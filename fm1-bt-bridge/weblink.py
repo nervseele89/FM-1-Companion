@@ -32,7 +32,9 @@ class WebLink:
             "connecting": self.connecting, "volume": self.volume, "battery": self.battery,
             "midi": {"peer": midi and midi.peer, "enabled": bool(midi and midi.enabled), "usb": midi and midi.usb_label(),
                      "error": midi and midi.error, "controllers": list(getattr(midi, "controllers", None) or []),
-                     "usb_b": getattr(midi, "usb_b", None), "net": list(getattr(midi, "net", None) or [])},
+                     "usb_b": getattr(midi, "usb_b", None), "net": list(getattr(midi, "net", None) or []),
+                     "pads": bool(getattr(midi, "pads", False))},
+            "matrix": dict(zip(("sources", "dests"), self.matrix_lists())),
             "clock": clock, "clock_text": self.clock_text(),
             "recording": int(self.recorder.seconds()) if self.recorder.recording() else None,
             "settings": dict({k: self.state[k] for k in SETTINGS}, arp_on=keys["arp_on"], chord_on=keys["chord_on"],
@@ -112,7 +114,7 @@ class WebLink:
                 self.toggle_recording()
             return None                       # toggle_recording says it
         if cmd == "routes":
-            self.state["routes"] = blemidi.clean_routes(c.get("routes"))
+            self.state["routes"] = self.keep_routes(blemidi.clean_routes(c.get("routes")))
             self.save_settings()
             if self.midi:
                 self.midi.set_routes(self.routes())

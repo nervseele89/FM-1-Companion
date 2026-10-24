@@ -146,11 +146,11 @@ class UsbMidi:
         self.lock = threading.Lock()
 
     def pick(self, names, cards=None):
-        names = [n for n in names if not any(s in n.lower() for s in self.SKIP)
-                 and any(m in n.lower() for m in self.match)]
-        if cards:                             # the FM-1s' sound cards, A first: this slot's one
-            card = cards[self.slot] if self.slot < len(cards) else None
+        names = [n for n in names if not any(s in n.lower() for s in self.SKIP)]
+        if cards:                             # the FM-1s' sound cards, A first: this slot's one, by card (an
+            card = cards[self.slot] if self.slot < len(cards) else None   # FM-1 running Clipper too)
             return next((n for n in names if sloop.port_card(n) == card), None)
+        names = [n for n in names if any(m in n.lower() for m in self.match)]
         return names[self.slot] if self.slot < len(names) else None
 
     def poll(self):
@@ -551,7 +551,7 @@ class UsbControllers:
     opened as it appears and closed as it goes, up to MAX. They merge into one source and one destination: "USB"
     in the matrix."""
 
-    MAX = 4
+    MAX, MAX_STUDIO = 4, 8
 
     def __init__(self, fm1, on_message):
         import mido
@@ -562,11 +562,11 @@ class UsbControllers:
 
     def wanted(self, names):
         """mido port names -> {client name: port name} of the controllers among them (a client's first port)"""
-        out = {}
+        out, fm1s = {}, set(sloop.fm1_cards())
         for name in names:
             low = name.lower()
             if (any(s in low for s in UsbMidi.SKIP) or any(m in low for m in self.fm1.match)
-                    or ADDRESS.search(name)):
+                    or ADDRESS.search(name) or sloop.port_card(name) in fm1s):   # (an FM-1's, by its card)
                 continue
             out.setdefault(name.split(":")[0], name)
         return out
@@ -583,7 +583,7 @@ class UsbControllers:
             if name in self.ports or len(self.ports) >= self.MAX:
                 continue
             try:
-                inp = self.mido.open_input(port, callback=lambda msg, name=name: self.received(msg))
+                inp = self.mido.open_input(port, callback=lambda msg, name=name: self.received(msg, name))
             except Exception:
                 continue
             try:
@@ -593,9 +593,9 @@ class UsbControllers:
             with self.lock:
                 self.ports[name] = {"in": inp, "out": out}
 
-    def received(self, msg):
+    def received(self, msg, name=None):
         self.last_activity = time.monotonic()
-        self.on_message(bytes(msg.bytes()))
+        self.on_message(bytes(msg.bytes()), name)
 
     def send_messages(self, messages):
         """complete MIDI messages to every controller that takes MIDI in"""
@@ -608,6 +608,18 @@ class UsbControllers:
                         port["out"].send(self.mido.Message.from_bytes(list(raw)))
                     except (ValueError, OSError):
                         break                 # a malformed message, or the controller just left
+
+    def send_to(self, name, messages):
+        """complete MIDI messages to one controller (a route to it alone, on the Studio)"""
+        with self.lock:
+            port = (self.ports.get(name) or {}).get("out")
+            if port is None:
+                return
+            for raw in messages:
+                try:
+                    port.send(self.mido.Message.from_bytes(list(raw)))
+                except (ValueError, OSError):
+                    break
 
     def names(self):
         return sorted(self.ports)
@@ -625,7 +637,9 @@ class UsbControllers:
 
 # ---------------------------------------------------------------- the MIDI matrix
 
-SOURCES, DESTINATIONS = ("BT", "USB", "NET", "FM-1", "FM-1 B", "Box"), ("FM-1", "FM-1 B", "BT", "USB", "NET")
+SOURCES, DESTINATIONS = ("BT", "USB", "NET", "FM-1", "FM-1 B", "Box"), ("FM-1", "FM-1 B", "BT", "USB", "NET",
+                                                                       "SMP")
+# SMP: the Studio's MPC-style sampler (pads.py): notes 36-51 play its 16 pads
 # NET: network MIDI (netmidi.py: a DAW on a computer, such as Kraken), on the desk box
 FM1S = ("FM-1", "FM-1 B")               # FM-1 A (the only one, usually) and a second FM-1 on the hub
 ROUTES = tuple(f"{s}>{d}" for s in SOURCES for d in DESTINATIONS if s != d)    # "Box": its clock, Start/Stop
@@ -642,11 +656,57 @@ ARP_RATES = {"1/4": 24, "1/8": 12, "1/8T": 8, "1/16": 6}  # clock ticks (24 a qu
 
 # USB controllers play the FM-1, and both FM-1s play together; the rest is a choice
 OFF_AT_FIRST = ("USB>BT", "FM-1>USB", "BT>USB", "Box>USB", "FM-1>FM-1 B", "FM-1 B>FM-1", "FM-1 B>BT", "FM-1 B>USB",
-                "USB>NET", "BT>NET", "NET>BT", "NET>USB", "Box>NET", "FM-1 B>NET")   # a DAW plays both FM-1s
+                "USB>NET", "BT>NET", "NET>BT", "NET>USB", "Box>NET", "FM-1 B>NET",   # a DAW plays both FM-1s
+                "FM-1>SMP", "FM-1 B>SMP", "Box>SMP")    # the keyboards and a DAW play the pads
+
+
+# The Studio gives each USB MIDI device its own row and column ("U:" + its name: "U:EP-136"), where the Pocket
+# has them all as one, USB. A device's routes start as USB's (it plays both FM-1s and the pads, nothing is sent
+# to it); from one device to another: off at first. Saved by name: a device keeps its routes when replugged.
+DEVICE = "U:"
+
+
+def device_key(name):
+    return DEVICE + str(name).replace(">", "")[:32]
+
+
+def generic(end):
+    """a matrix end as the Pocket's: a USB device is USB"""
+    return "USB" if end.startswith(DEVICE) else end
+
+
+def matrix(devices=None):
+    """(sources, destinations): devices None, the Pocket's (USB, all of them as one); a list of USB MIDI device
+    names, the Studio's (each its own, where USB is)"""
+    if devices is None:
+        return SOURCES, DESTINATIONS
+    keys = [device_key(n) for n in devices]
+
+    def put(ends):
+        i = ends.index("USB")
+        return ends[:i] + tuple(keys) + ends[i + 1:]
+    return put(SOURCES), put(DESTINATIONS)
+
+
+def route_keys(devices=None):
+    sources, dests = matrix(devices)
+    return [f"{s}>{d}" for s in sources for d in dests if s != d]
+
+
+def known_route(key):
+    """a route the matrix can have: the fixed ones, or a USB device's"""
+    if key in ROUTES:
+        return True
+    src, sep, dest = key.partition(">")
+    ok = lambda end, ends: end in ends or (end.startswith(DEVICE) and 2 < len(end) <= 34)   # noqa: E731
+    return bool(sep) and src != dest and ok(src, SOURCES) and ok(dest, DESTINATIONS) and DEVICE in key
 
 
 def route_default(key):
-    return dict(DEFAULT_ROUTE, on=key not in OFF_AT_FIRST)
+    src, _, dest = key.partition(">")
+    if src.startswith(DEVICE) and dest.startswith(DEVICE):
+        return dict(DEFAULT_ROUTE, on=False)
+    return dict(DEFAULT_ROUTE, on=f"{generic(src)}>{generic(dest)}" not in OFF_AT_FIRST)
 
 
 def default_routes():
@@ -660,8 +720,9 @@ def clean_routes(routes):
         raise ValueError("routes must be an object")
     out = default_routes()
     for key, route in routes.items():
-        if key not in ROUTES or not isinstance(route, dict):
+        if not known_route(key) or not isinstance(route, dict):
             raise ValueError(f"no route {key!r}")
+        out.setdefault(key, route_default(key))
         for name, value in route.items():
             if name not in DEFAULT_ROUTE:
                 raise ValueError(f"{key}: no setting {name!r}")
@@ -885,8 +946,9 @@ class MidiBridge:
     """Joins the FM-1's USB MIDI and the BLE MIDI service. Status for the screen:
     usb_label(), peer, enabled, pairing_until, activity()."""
 
-    def __init__(self, source_match, enabled=True, net=False):
+    def __init__(self, source_match, enabled=True, net=False, pads=None):
         self.enabled, self.paused = enabled, False
+        self.pads, self.pads_lock = pads, threading.Lock()    # the sampler's pipe (the Studio), notes for its pads
         self.net = self.mcu = None            # network MIDI (the desk box): music, and a Mackie Control surface
         if net:
             import netmidi
@@ -903,16 +965,32 @@ class MidiBridge:
         self.usb = UsbMidi(source_match, self.from_usb)
         self.usb_b = UsbMidi(source_match, lambda message: self.from_fm1("FM-1 B", message), slot=1)
         self.controllers = UsbControllers(self.usb, self.from_controllers)
+        self.split = bool(net)                # the Studio: each USB MIDI device its own row and column
+        if net:                               # the Studio: four USB ports, more on a hub (the Pocket: 4, its CPU)
+            self.controllers.MAX = UsbControllers.MAX_STUDIO
         self.ble_stream = MidiStream()
         self.clock_mode, self.bpm, self.playing = "follow", 120.0, False     # "follow" or "box"
         self.box_count, self.box_bar = 0, None      # the box clock's ticks since Start, its bar's start
+        self.box_origin = None                      # when the box clock's tick 0 (after Start) was due
         self.watch = {source: ClockWatch() for source in SOURCES if source != "Box"}
         self.routes = {key: Route(route_default(key)) for key in ROUTES}
+        self.saved = {}                       # the routes as the app last sent them (a USB device's, made on use)
         self.held, self.chan_seen = {}, [0.0] * 16      # for the MIDI meter: notes down, channel traffic
 
     def set_routes(self, routes):
+        self.saved = dict(routes or {})
         for key, route in self.routes.items():
-            self.deliver(key, route.update(dict(route_default(key), **((routes or {}).get(key) or {}))))
+            self.deliver(key, route.update(dict(route_default(key), **(self.saved.get(key) or {}))))
+
+    def route(self, key):
+        """the route key, made the first time a USB device's is used (from its saved settings)"""
+        r = self.routes.get(key)
+        if r is None:
+            r = self.routes[key] = Route(dict(route_default(key), **(self.saved.get(key) or {})))
+        return r
+
+    def dests(self):
+        return matrix(self.controllers.names() if self.split else None)[1]
 
     def deliver(self, key, messages):
         """messages out of a route, to its destination"""
@@ -926,9 +1004,18 @@ class MidiBridge:
                     self.note_watch(m, time.monotonic())
         elif dest == "USB":
             self.controllers.send_messages(messages)
+        elif dest.startswith(DEVICE):         # one USB device (the Studio)
+            self.controllers.send_to(dest[len(DEVICE):], messages)
         elif dest == "NET":
             if self.net:
                 self.net.send(messages)
+        elif dest == "SMP":
+            if self.pads is not None:
+                with self.pads_lock:
+                    try:
+                        self.pads.send(("midi", [list(m) for m in messages]))
+                    except (BrokenPipeError, OSError):
+                        pass
         else:
             for m in messages:
                 self.to_ble(m)
@@ -956,6 +1043,8 @@ class MidiBridge:
 
         threading.Thread(target=body, daemon=True).start()
         threading.Thread(target=self.clock_loop, daemon=True).start()
+        if self.pads is not None:
+            threading.Thread(target=self.grid_loop, daemon=True).start()
         for session in (self.net, self.mcu):
             if session:
                 session.start()
@@ -981,6 +1070,8 @@ class MidiBridge:
             if due > now:
                 time.sleep(due - now)
             if box:
+                if self.box_count == 0:
+                    self.box_origin = due
                 if self.box_count % 96 == 0:
                     self.box_bar = due
                 self.box_count += 1
@@ -990,18 +1081,47 @@ class MidiBridge:
             if time.monotonic() - due > 0.1:  # far behind (the CPU was busy): start afresh
                 due = time.monotonic()
 
+    def grid(self, now):
+        """(seconds a clock tick, when tick 0 after Start was, playing) of the clock the box goes by: its own
+        or the one it follows (the line fitted through its ticks); (seconds at the box's tempo, None, False)
+        without one"""
+        if self.clock_mode == "box":
+            return 60.0 / (self.bpm * 24), self.box_origin, bool(self.playing and self.box_origin)
+        for watch in self.watch.values():
+            f = watch.fit(now)
+            if f:
+                return f[0], f[1], watch.playing
+        return 60.0 / (self.bpm * 24), None, False
+
+    def grid_loop(self):
+        """the beat grid to the sampler (its sequencer plays on it): when it starts or stops at once, else
+        every half second while it plays (a followed clock's fitted line moves a little)"""
+        sent, sent_at = None, 0.0
+        while True:
+            now = time.monotonic()
+            grid = self.grid(now)
+            if (sent is None or grid[2] != sent[2] or (grid[1] is None) != (sent[1] is None)
+                    or (grid[2] and now - sent_at >= 0.5)):
+                with self.pads_lock:
+                    try:
+                        self.pads.send(("grid",) + tuple(grid))
+                    except (BrokenPipeError, OSError):
+                        return
+                sent, sent_at = grid, now
+            time.sleep(0.02)
+
     def transport(self, command):
         """Start or Stop to the FM-1 and Bluetooth"""
         self.playing = command == "start"
         if self.playing:
-            self.box_count = 0
+            self.box_count, self.box_origin = 0, None    # (the next tick is tick 0: the grid starts there)
             self.arp_restart()
         self.send_all(bytes([START if self.playing else STOP]))
 
     def send_all(self, message):
         """the box's own clock and Start/Stop, where the matrix's Box routes are on"""
-        for dest in DESTINATIONS:
-            if self.routes[f"Box>{dest}"].s["on"]:
+        for dest in self.dests():
+            if self.route(f"Box>{dest}").s["on"]:
                 self.deliver(f"Box>{dest}", [message])
 
     def clock_status(self, now):
@@ -1040,7 +1160,7 @@ class MidiBridge:
     def passes(self, source, message):
         """Looks at clock on the way; as clock master, keeps other clock and transport to itself."""
         if message and message[0] in TRANSPORT:
-            self.watch[source].message(message[0], time.monotonic())
+            self.watch[generic(source)].message(message[0], time.monotonic())
             if self.clock_mode != "box":      # following: the arps step with the incoming clock
                 if message[0] == CLOCK:
                     self.arp_tick()
@@ -1061,10 +1181,10 @@ class MidiBridge:
         self.route_from(source, message)
 
     def route_from(self, source, message):
-        for dest in DESTINATIONS:
+        for dest in self.dests():
             if dest != source:
                 key = f"{source}>{dest}"
-                self.deliver(key, self.routes[key].apply_all(message))
+                self.deliver(key, self.route(key).apply_all(message))
 
     # network MIDI: a DAW's notes and clock (the routes' NET), and what it shows on the control surface
     def from_net(self, message):
@@ -1085,10 +1205,12 @@ class MidiBridge:
         return {"net": self.net.names(), "mcu": mcu, "net_error": self.net.error}
 
     # USB controllers -> the FM-1 (and Bluetooth, if that route is on); called on rtmidi's thread
-    def from_controllers(self, message):
-        if is_library_sysex(message) or not self.passes("USB", message):
+    def from_controllers(self, message, name=None):
+        """name: the controller it came from (the Studio routes each on its own)"""
+        source = device_key(name) if self.split and name else "USB"
+        if is_library_sysex(message) or not self.passes(source, message):
             return
-        self.route_from("USB", message)
+        self.route_from(source, message)
 
     def to_ble(self, message):
         if not (self.bluez and self.enabled and self.peer):
@@ -1167,12 +1289,12 @@ class MidiBridge:
 
 # ---------------------------------------------------------------- in a process of its own
 
-def run_child(conn, source_match, enabled, net=False):
+def run_child(conn, source_match, enabled, net=False, pads=None):
     """The MIDI process: MidiBridge, sending its status up the pipe when it changes and taking
     ("enabled", bool) and ("pair",) commands. Exits when the app's end of the pipe closes."""
     import os
     import metronome
-    bridge = MidiBridge(source_match, enabled, net)
+    bridge = MidiBridge(source_match, enabled, net, pads)
     bridge.start()
     metro = metronome.Metronome(lambda: bridge.clock_status(time.monotonic()), on_start=make_realtime)
     wanted = [False, None, "mid", 48000]    # the metronome: on, the speaker, the click's level, the rate
@@ -1214,6 +1336,8 @@ def run_child(conn, source_match, enabled, net=False):
                   "clock": bridge.clock_status(now)}
         status["notes"], status["chans"] = bridge.notes_status(now)
         status.update(bridge.net_status())
+        status["pads"] = bridge.pads is not None
+        status["split"] = bridge.split
         if status != last:
             try:
                 conn.send(status)
@@ -1228,12 +1352,13 @@ class MidiProcess:
     one thread at a time, and drawing a screen frame takes ~75 ms on a Zero W: in the app's process
     that held notes back, unevenly. In its own process the kernel switches to it as a note arrives."""
 
-    def __init__(self, source_match, enabled=True, net=False):
+    def __init__(self, source_match, enabled=True, net=False, pads=None):
         import multiprocessing
         ctx = multiprocessing.get_context("fork")
         self.conn, child = ctx.Pipe()
-        self.proc = ctx.Process(target=run_child, args=(child, source_match, enabled, net), daemon=True,
+        self.proc = ctx.Process(target=run_child, args=(child, source_match, enabled, net, pads), daemon=True,
                                 name="fm1-midi")
+        self.pads = pads is not None          # the Studio's sampler takes notes (the routes' SMP)
         self.net, self.mcu = [], None        # network MIDI: computers connected; the control surface's state
         self.enabled, self.peer, self.error = enabled, None, None
         self.pairing_until = 0.0
@@ -1257,6 +1382,7 @@ class MidiProcess:
             self.peer, self.error = status["peer"], status["error"]
             self.usb, self.last_activity = status["usb"], status["activity"]
             self.controllers = status.get("controllers") or []
+            self.split = status.get("split", False)
             self.usb_b = status.get("usb_b")
             self.clock = status.get("clock")
             self.notes, self.chans = status.get("notes") or [], status.get("chans", 0)

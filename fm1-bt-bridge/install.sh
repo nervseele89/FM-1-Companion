@@ -20,14 +20,14 @@ echo "== Your password is needed once, for sudo"
 sudo -v
 while kill -0 "$$" 2>/dev/null; do sudo -n true; sleep 50; done 2>/dev/null &   # keep sudo for the whole install
 
-echo "== Installing packages (this takes a while on a Zero W)"
+echo "== Installing packages (this takes a while: several minutes, longest on a Pi Zero)"
 sudo apt-get update
 sudo apt-get install -y --no-install-recommends \
     pipewire wireplumber libspa-0.2-bluetooth dbus-user-session rtkit bluez \
     python3-pil python3-spidev python3-libgpiod fonts-dejavu-core \
     python3-dbus python3-gi python3-mido python3-rtmidi python3-numpy python3-smbus2 i2c-tools
 
-echo "== Enabling SPI for the OLED HAT, Bluetooth, and permissions"
+echo "== Enabling SPI for the screen, Bluetooth, and permissions"
 sudo raspi-config nonint do_spi 0
 sudo raspi-config nonint do_i2c 0       # a PiSugar 3 battery, if there's one, answers on I2C
 sudo rfkill unblock bluetooth || true
@@ -42,17 +42,43 @@ if [ "$BUILD" = pocket ] && ! grep -q "dwc_otg.speed=1" "$CMDLINE"; then
     sudo cp "$CMDLINE" "$CMDLINE.bak"
     sudo sed -i '1 s/$/ dwc_otg.speed=1/' "$CMDLINE"
 fi
+# The Studio: no console text on its screens (its boot screen shows from early in boot instead, and HDMI
+# mirrors the screen), no blinking cursor, no logo
+for opt in vt.global_cursor_default=0 fbcon=map:9 logo.nologo; do
+    if [ "$BUILD" = desk ] && ! grep -q "$opt" "$CMDLINE"; then
+        sudo cp "$CMDLINE" "$CMDLINE.bak"
+        sudo sed -i "1 s/\$/ $opt/" "$CMDLINE"
+    fi
+done
 # The Studio's 3.5" touchscreen (ILI9486 display, XPT2046 touch: the common "3.5 inch RPi LCD"): the kernel's
 # own driver, a framebuffer at /dev/fb1 and a touch input device; landscape. Not the seller's LCD-show script,
 # which replaces system files. Takes effect at the next boot.
 CONFIG=/boot/firmware/config.txt
 [ -f "$CONFIG" ] || CONFIG=/boot/config.txt
-if [ "$BUILD" = desk ] && ! grep -q "^dtoverlay=waveshare35a" "$CONFIG"; then
+# Raspberry Pi OS from 2026 no longer ships waveshare35a: piscreen is the same chips on the same pins (display on
+# CE0, DC GPIO24, reset GPIO25; touch on CE1, its interrupt GPIO17). Its fbtft driver, not its DRM one (drm):
+# on the Hosyond 3.5" the DRM driver's start-up leaves the panel white (tested 2026-10-24). 24 MHz SPI: clean on
+# that panel and half again the frames of 16 MHz (the meters smoother; tested 2026-10-24).
+if [ -f "$(dirname "$CONFIG")/overlays/waveshare35a.dtbo" ]; then
+    SCREEN="dtoverlay=waveshare35a,rotate=90"
+else
+    SCREEN="dtoverlay=piscreen,speed=24000000,rotate=90"
+fi
+if [ "$BUILD" = desk ] && ! grep -q "^dtoverlay=\(waveshare35a\|piscreen\|mipi-dbi-spi\)" "$CONFIG"; then
     sudo cp "$CONFIG" "$CONFIG.bak"
     printf '
+[all]
 # FM-1 Companion Studio: the 3.5" touchscreen
-dtoverlay=waveshare35a,rotate=90
-' | sudo tee -a "$CONFIG" >/dev/null
+dtparam=spi=on
+%s
+' "$SCREEN" | sudo tee -a "$CONFIG" >/dev/null
+fi
+
+if [ "$BUILD" = desk ]; then              # the boot screen as soon as the touchscreen appears (deskboot.py)
+    echo "== The Studio's boot screen, early in boot"
+    printf 'SUBSYSTEM=="graphics", KERNEL=="fb[0-9]", ATTR{name}=="fb_ili9486|ili9486drmfb", RUN+="/bin/sh -c '"'"'test -f %s && cat %s > /dev/%%k'"'"'"\n' \
+        "$HOME/.local/share/fm1-bridge/splash.raw" "$HOME/.local/share/fm1-bridge/splash.raw" \
+        | sudo tee /etc/udev/rules.d/90-fm1-splash.rules >/dev/null
 fi
 
 if [ "$BUILD" = desk ]; then              # network MIDI for a DAW (Kraken): listed for computers to find
@@ -90,6 +116,10 @@ install -D -m 644 "$DIR/desk.py"                                ~/.local/share/f
 install -D -m 644 "$DIR/deskui.py"                              ~/.local/share/fm1-bridge/deskui.py
 install -D -m 644 "$DIR/deskmeters.py"                          ~/.local/share/fm1-bridge/deskmeters.py
 install -D -m 644 "$DIR/deskpages.py"                           ~/.local/share/fm1-bridge/deskpages.py
+install -D -m 644 "$DIR/pads.py"                                ~/.local/share/fm1-bridge/pads.py
+install -D -m 644 "$DIR/deskpads.py"                            ~/.local/share/fm1-bridge/deskpads.py
+install -D -m 644 "$DIR/padfx.py"                               ~/.local/share/fm1-bridge/padfx.py
+install -D -m 644 "$DIR/deskboot.py"                            ~/.local/share/fm1-bridge/deskboot.py
 install -D -m 644 "$DIR/netmidi.py"                             ~/.local/share/fm1-bridge/netmidi.py
 install -D -m 644 "$DIR/sloopstyle.py"                          ~/.local/share/fm1-bridge/sloopstyle.py
 install -D -m 644 "$DIR/weblink.py"                             ~/.local/share/fm1-bridge/weblink.py
@@ -113,7 +143,11 @@ fi
 install -D -m 644 "$DIR/config/fm1-bridge.service"              ~/.config/systemd/user/fm1-bridge.service
 install -D -m 644 "$DIR/config/fm1-web.service"                 ~/.config/systemd/user/fm1-web.service
 
-echo "== Booting faster (a Zero W on Trixie otherwise takes ~3 minutes before the bridge starts)"
+if [ "$BUILD" = desk ] && [ ! -f ~/.local/share/fm1-bridge/splash.raw ]; then   # the first boot's picture
+    (cd ~/.local/share/fm1-bridge && python3 -c "import deskboot, sloopstyle; deskboot.save(sloopstyle.Theme())")         || echo "   (the boot screen's picture comes with the first start instead)"
+fi
+
+echo "== Booting faster (on Trixie a Zero W otherwise takes ~3 minutes before the Companion starts)"
 # cloud-init only applies Raspberry Pi Imager's settings on the first boot, but costs ~40 s on every boot
 sudo touch /etc/cloud/cloud-init.disabled
 # start the user services (PipeWire, the bridge) without waiting for NetworkManager
@@ -130,5 +164,9 @@ sync                                    # on the card before anyone pulls the po
 
 echo
 echo "Done. Reboot now:  sudo reboot"
-echo "After the reboot the OLED shows the bridge. If it is upside down, see README.md."
-echo "Once everything works, turn Wi-Fi off on the device: joystick right > Wi-Fi."
+if [ "$BUILD" = desk ]; then
+    echo "After the reboot: the boot screen, then HOME (on the first install, the touch setup first: four targets)."
+else
+    echo "After the reboot the OLED shows the bridge. If it is upside down, see README.md."
+    echo "Once everything works, turn Wi-Fi off on the device: joystick right > Wi-Fi."
+fi

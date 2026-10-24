@@ -106,7 +106,11 @@ class Reader:
 def fm1_cards(text=None):
     """The FM-1s' ALSA sound card numbers, FM-1 A first: in the order of the USB ports they're plugged into (a
     hub's port 1 before its port 3), so A and B stay the same across reboots and replugs. [] without
-    /proc/asound. The box's audio, MIDI and library all go by this, so they agree on which FM-1 is which."""
+    /proc/asound. The box's audio, MIDI and library all go by this, so they agree on which FM-1 is which.
+
+    Clipper (isod89's synth firmware) runs on the FM-1 and on M-Vave's SMK-37 keyboard, under the same name and
+    USB ID: a Clipper card counts as an FM-1 only when no other FM-1 (Felucca, SLOOP) is plugged in. Next to
+    one, it's an instrument: a USB keyboard with its own sound (a mixer channel of its own)."""
     if text is None:
         try:
             text = CARDS.read_text(errors="replace")
@@ -123,8 +127,10 @@ def fm1_cards(text=None):
             continue
         path = re.search(r"\.usb-([\d.]+)", detail)          # "at usb-20980000.usb-1.3": hub port 3
         key = tuple(int(p) for p in path.group(1).strip(".").split(".")) if path else (999,)
-        found.append((key, int(m.group(1))))
-    return [card for _, card in sorted(found)]
+        found.append((key, int(m.group(1)), "clipper" in both))
+    if any(not clipper for _, _, clipper in found):         # a real FM-1 here: a Clipper is an instrument
+        found = [f for f in found if not f[2]]
+    return [card for _, card, _ in sorted(found)]
 
 
 def port_card(name):

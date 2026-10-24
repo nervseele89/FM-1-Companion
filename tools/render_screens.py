@@ -268,42 +268,110 @@ class RgbCapture:
 
 
 def desk_screens(state, out):
-    """The desk box's touch screens (desk-ui-TAB.png), in SLOOP's GREEN and in a custom theme like FM-1 A's
-    (desk-ui-TAB-theme.png): two FM-1s, the SMK-37's synth and a speaker"""
-    import deskui
+    """The Studio's touch screens (desk-ui-NAME.png), in SLOOP's GREEN and in a custom theme like FM-1 A's
+    (desk-ui-NAME-theme.png), as the real Studio runs: two FM-1s, an SMK-37 running Clipper, a K.O. Sidekick
+    (EP-136), the sampler with a kit and a beat, the headphone jack, a speaker. The tabs, then the sampler's pages
+    (SEQ, FX, the sample editor), the recorder and the boot screen"""
+    import deskboot
     import sloopstyle
     meters.load_numpy()
     custom = sloopstyle.Theme("MY THEME", [(8, 36, 48), (24, 76, 96), (40, 124, 168), (56, 180, 240),
                                            (144, 212, 248)], None, (40, 60, 64), (248, 252, 248))
+    samples = studio_samples()
+    pages = [("home", "HOME", {}), ("mix", "MIX", {}), ("pads", "PADS", {}), ("rec", "REC", {}),
+             ("midi", "MIDI", {}), ("more", "MORE", {}), ("seq", "PADS", {"seq_open": True}),
+             ("fx", "PADS", {"fx_open": True, "fx_on": 1, "fx_latch": True}), ("editor", "PADS", {"editor": True})]
     for suffix, theme in (("", sloopstyle.Theme("GREEN")), ("-theme", custom)):
-        for tab in deskui.TABS:
+        for name, tab, attrs in pages:
+            attrs = dict(attrs)                       # (each theme's pass: its own copy)
             display = RgbCapture()
-            app = bridge.App(display, dict(state, mix={"a": 100, "b": 80, "usb": 175}, rec_parts=True))
-            app.loop, app.midi, app.wifi = Loop(), Midi(), False
-            app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
-            app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
-            app.source_b = {"id": 3, "name": "alsa_input.usb-Felucca.2", "label": "Felucca"}
-            app.others = [{"id": 4, "name": "alsa_input.usb-SMK", "label": "SMK-37+VA"}]
-            app.fw_label = "SLOOP 2.8"
-            app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
-            app.volume, app.playing = 64, True
-            app.battery = {"percent": 78, "mv": 3818, "plugged": False}
-            app.levels = Levels()
-            app.library_state = lambda now=None: None
-            routes = __import__("blemidi").default_routes()
-            routes["USB>FM-1"]["transpose"] = 12
-            app.state["routes"] = routes
-            ui = deskui.DeskUI(app, display)
-            ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
-            ui.theme = theme
+            app, ui = studio_app(state, display, theme, samples)
             ui.open_tab(tab)
-            for _ in range(4 if tab == "METER" else 1):
+            if attrs.pop("editor", False):
+                ui.browse_edit(samples[9], "samples")
+                while app.ed["loading"]:
+                    time.sleep(0.05)
+            for key, value in attrs.items():
+                setattr(ui, key, value)
+            for _ in range(4 if tab in ("METER", "REC") else 1):
                 ui.render(time.monotonic(), force=True)
                 time.sleep(0.1)
-            name = f"desk-ui-{tab.lower()}{suffix}.png"
-            display.image.save(out / name, optimize=True)
-            print("wrote", out / name)
+            display.image.save(out / f"desk-ui-{name}{suffix}.png", optimize=True)
+            print("wrote", out / f"desk-ui-{name}{suffix}.png")
+        boot = deskboot.frame(theme, 3)
+        boot.save(out / f"desk-ui-boot{suffix}.png", optimize=True)
+        print("wrote", out / f"desk-ui-boot{suffix}.png")
     desk_meters_sheet(state, out, custom)
+
+
+def studio_samples():
+    """a kit's worth of short samples in the (empty) library: their names show on the pads and in the editor"""
+    import numpy as np
+    import wave
+    import library as lib
+    names = ["kick_C2", "snare", "clap", "chat", "ohat", "rim", "tom-lo", "tom-hi", "crash", "vox-chop_A3",
+             "stab_C3", "bass_E1"]
+    t = np.arange(24000) / 48000
+    for i, name in enumerate(names):
+        path = lib.folder("samples") / f"{name}.wav"
+        if not path.exists():
+            with wave.open(str(path), "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(48000)
+                tone = np.sin(2 * np.pi * (60 + 40 * i) * t * (1 + t)) * np.exp(-t * (4 + i))
+                w.writeframes((tone * 20000).astype("<i2").tobytes())
+    return [f"{n}.wav" for n in names]
+
+
+def studio_app(state, display, theme, samples):
+    import deskui
+    import library as lib
+    import pads
+
+    class Pads:
+        sounding, step = [0, 5], 6
+
+        def send(self, *msg):
+            pass
+    app = bridge.App(display, dict(state, rec_parts=True, cues=["u-clipper"], cue_mix=50, desk_theme="follow"))
+    app.loop, app.midi, app.wifi = Loop(), Midi(), True
+    app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
+    app.midi.split, app.midi.pads, app.midi.net = True, True, []
+    app.midi.controllers = ["Clipper", "EP-136"]
+    app.source = {"id": 1, "name": "alsa_input.usb-Felucca", "label": "Felucca"}
+    app.source_b = {"id": 3, "name": "alsa_input.usb-Felucca.2", "label": "Felucca"}
+    app.others = [{"id": 4, "name": "alsa_input.usb-Clipper", "label": "Clipper"},
+                  {"id": 5, "name": "alsa_input.usb-EP-136", "label": "EP-136", "ports": [f"capture_AUX{i}" for i in range(8)]},
+                  {"id": 6, "name": "fm1-sampler", "label": "SAMPLER"}]
+    app.jack = {"id": 9, "name": "alsa_output.bcm2835", "label": "PHONES"}
+    app.fw_label = "SLOOP 2.8"
+    app.sink = {"id": 2, "name": "bluez_output.jbl", "label": "JBL Go 3"}
+    app.volume, app.playing = 64, True
+    app.battery = {"percent": 78, "mv": 3818, "plugged": False}
+    app.levels = Levels()
+    app.recorder, app.tape_done = Recording(), 0.35
+    app.library_state = lambda now=None: None
+    app.save_settings = lambda: None
+    app.pads = Pads()
+    kit = pads.empty_kit("BOOM BAP")
+    for i, name in enumerate(samples):
+        kit["pads"][i]["sample"] = str(lib.folder("samples") / name)
+    seq = kit["seq"]
+    seq["len"], seq["swing"] = 32, 55
+    for i in range(0, 32, 4):
+        seq["steps"][i].append([0, 0, 1])
+    for i in range(2, 32, 2):
+        seq["steps"][i].append([3, 1 if i % 4 else 0, 1])
+    for i in (4, 12, 20, 28):
+        seq["steps"][i].append([2, 0, 1])
+    seq["steps"][14] = sorted(seq["steps"][14] + [[0, 1, 2]])
+    app.state["kit"] = kit
+    app.state["routes"] = {"U:EP-136>FM-1": {"on": False}, "U:EP-136>FM-1 B": {"transpose": 12}}
+    ui = deskui.DeskUI(app, display)
+    ui.current_theme = lambda now, theme=theme: setattr(ui, "theme", theme) or theme
+    ui.theme = theme
+    return app, ui
 
 
 def desk_meters_sheet(state, out, theme):
@@ -311,6 +379,8 @@ def desk_meters_sheet(state, out, theme):
     import deskui
     frames = []
     for i, name in enumerate(meters.METERS):
+        if name in deskui.HIDDEN_METERS:              # (the Studio leaves these out)
+            continue
         display = RgbCapture()
         app = bridge.App(display, dict(state, meter=i))
         app.loop, app.midi, app.wifi = Loop(), Midi(), False

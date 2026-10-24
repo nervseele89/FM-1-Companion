@@ -387,7 +387,8 @@ class Recorder:
 
 
 PARTS_NODE = "fm1-rec-parts"
-PARTS_MAP = ("FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR")     # positions the WAV writer knows (7.1)
+# positions the WAV writer knows (WAVE_FORMAT_EXTENSIBLE's), in pairs: 7.1, then two more pairs: six sources
+PARTS_MAP = ("FL", "FR", "FC", "LFE", "RL", "RR", "SL", "SR", "FLC", "FRC", "TFL", "TFR")
 
 
 def link_parts(sources):

@@ -50,7 +50,8 @@ class Theme:
     track[k] (full), mid[k] (2/3), dim[k] (1/3), grey[0..3] (adjusted for a non-black background, as SLOOP)"""
 
     def __init__(self, name="GREEN", c=None, tracks=None, bg=(0, 0, 0), hi=(255, 255, 255)):
-        self.name, self.c = name, list(c or PALETTES.get(name, PALETTES["GREEN"]))
+        self.name = name                      # (colours as tuples: a theme read back from JSON has lists, which
+        self.c = [tuple(x) for x in (c or PALETTES.get(name, PALETTES["GREEN"]))]   # Pillow 11 refuses)
         self.bg, self.hi = tuple(bg), tuple(hi)
         self.track = [tuple(t) for t in (tracks or TRACKS)]
         self.mid = [scale(t, 2, 3) for t in self.track]

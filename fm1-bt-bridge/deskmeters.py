@@ -14,6 +14,8 @@ import meters as m
 import sloopstyle as st
 
 BANDS = 32                                # the spectrum's bands (the pocket box has 16)
+FALL = 26.0                               # dB a second a level bar falls back (rises at once): steady at any
+                                          # frame rate, as a real peak meter's
 
 
 class DeskMeters:
@@ -26,8 +28,14 @@ class DeskMeters:
         self.wf, self.corr = None, 0.0
         self.hist, self.hacc, self.hnext = [], m.FLOOR, 0.0
         self.edges = None
+        self.shown = [m.FLOOR, m.FLOOR]           # the level bars as drawn (Bars, Tape): their fall
 
     # ---- colours
+
+    def ballistic(self, ch, peak, dt):
+        """channel ch's level bar: up at once to a new peak, down at FALL dB a second"""
+        self.shown[ch] = max(max(m.FLOOR, m.db(peak)), self.shown[ch] - FALL * dt)
+        return self.shown[ch]
 
     @staticmethod
     def level_colour(t, level):
@@ -35,9 +43,9 @@ class DeskMeters:
 
     # ---- the frame
 
-    def draw(self, app, img, box, t, now):
-        """the meter app.state["meter"] picks, in box (x0, y0, x1, y1) of img"""
-        style = m.METERS[app.meter_index()]
+    def draw(self, app, img, box, t, now, style=None):
+        """the meter app.state["meter"] picks (or style: the RECORD tab's Tape), in box (x0, y0, x1, y1) of img"""
+        style = style or m.METERS[app.meter_index()]
         d = ImageDraw.Draw(img)
         if style == "MIDI":
             return self.draw_midi(app, img, d, box, t, now)
@@ -71,7 +79,7 @@ class DeskMeters:
             return left + int((right - left) * (max(-48.0, min(0.0, level)) + 48) / 48)
         clip = False
         for ch, y in ((0, y0 + 28), (1, y0 + 100)):
-            level = max(m.FLOOR, m.db(peak[ch]))
+            level = self.ballistic(ch, peak[ch], dt)
             hold = self.hold[ch]
             if level >= hold[0] or now - hold[1] > 1.5:
                 hold[:] = [level, now] if level >= hold[0] else [max(level, hold[0] - 30 * dt), hold[1]]
@@ -228,7 +236,7 @@ class DeskMeters:
         mid = (x0 + x1) // 2
         d.rectangle((mid - 22, y1 - 34, mid + 22, y1 - 16), fill=t.grey[2])                       # the head
         for ch, x in ((0, mid - 18), (1, mid + 4)):
-            level = max(-48.0, min(0.0, m.db(peak[ch])))
+            level = max(-48.0, min(0.0, self.ballistic(ch, peak[ch], dt)))
             h = int(110 * (level + 48) / 48)
             d.rectangle((x, y0 + 40, x + 14, y0 + 150), fill=t.c[0])
             if h:

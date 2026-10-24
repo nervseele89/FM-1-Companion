@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The FM-1 Companion's web page, http://fm1bridge.local while Wi-Fi is on.
+"""The FM-1 Companion's web page, http://fm1bridge.local over Wi-Fi or Ethernet.
 
 Four tabs: Status (the box's live status, and the settings you change while playing: metronome, tempo,
 clock, arp, chord, volume, audio rate, Start/Stop, recording), MIDI (the routes as a grid, each route's
@@ -604,16 +604,22 @@ function toggleRec() { cmd({cmd:"record", value: st && st.recording != null ? "s
 // ---------------------------------------------------------------- MIDI tab
 // FM-1 B's row and column only while a second FM-1 is plugged in (then the first is FM-1 A)
 // NET (network MIDI: a DAW on a computer, the desk box) only while a computer is connected
-const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "NET":"Network", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB", "NET"];
-let twoFm1 = false, netOn = false, SOURCES = {}, DESTS = [];
-function setFm1s(two, net = netOn) {
-  twoFm1 = two; netOn = net;
-  const shown = (k) => (two || k !== "FM-1 B") && (net || k !== "NET");
-  SOURCES = Object.fromEntries(Object.entries(ALL_SOURCES).filter(([k]) => shown(k)).map(([k, v]) => [k, two && k === "FM-1" ? "FM-1 A" : v]));
-  DESTS = ALL_DESTS.filter(shown);
-  if ((!two && sel.includes("FM-1 B")) || (!net && sel.includes("NET"))) sel = "BT>FM-1";
+const ALL_SOURCES = {"BT":"Bluetooth", "USB":"USB keys", "NET":"Network", "FM-1":"FM-1", "FM-1 B":"FM-1 B", "Box":"Box clock"}, ALL_DESTS = ["FM-1", "FM-1 B", "BT", "USB", "NET", "SMP"];
+let twoFm1 = false, netOn = false, padsOn = false, SOURCES = {}, DESTS = [];
+// the Studio: each USB MIDI device its own row and column ("U:" + its name), as st.matrix lists them
+let matrixKey = "";
+const devName = (k) => k.startsWith("U:") ? k.slice(2) : null;
+function setFm1s(two, net = netOn, pads = padsOn, matrix = null) {
+  twoFm1 = two; netOn = net; padsOn = pads;
+  const shown = (k) => (two || k !== "FM-1 B") && (net || k !== "NET") && (pads || k !== "SMP");
+  const label = (k) => devName(k) || (two && k === "FM-1" ? "FM-1 A" : ALL_SOURCES[k] || k);
+  const srcs = matrix ? matrix.sources : Object.keys(ALL_SOURCES).filter(shown);
+  SOURCES = Object.fromEntries(srcs.map((k) => [k, label(k)]));
+  DESTS = matrix ? matrix.dests : ALL_DESTS.filter(shown);
+  const [s, d] = sel.split(">");
+  if (!(s in SOURCES) || !DESTS.includes(d)) sel = "BT>FM-1";
 }
-const destName = (d) => d === "BT" ? "Bluetooth" : d === "NET" ? "Network" : twoFm1 && d === "FM-1" ? "FM-1 A" : d;
+const destName = (d) => devName(d) || (d === "BT" ? "Bluetooth" : d === "NET" ? "Network" : d === "SMP" ? "Sampler" : twoFm1 && d === "FM-1" ? "FM-1 A" : d);
 const CHORDS = ["oct","5th","maj","min","7","maj7","m7"], ARPS = ["up","down","updown","played","random"], RATES = ["1/4","1/8","1/8T","1/16"];
 let routes = null, sel = "BT>FM-1", routesDirtyUntil = 0, saveTimer;
 setFm1s(false);
@@ -858,7 +864,8 @@ async function status() {
   // and the presets' name fields mustn't change under your fingers
   const r = JSON.stringify(st.routes), p = JSON.stringify(st.presets || {});
   const net = !!(st.midi.net && st.midi.net.length);
-  if (!!st.midi.usb_b !== twoFm1 || net !== netOn) { setFm1s(!!st.midi.usb_b, net); shownRoutes = ""; }
+  const mk = JSON.stringify(st.matrix || null);
+  if (!!st.midi.usb_b !== twoFm1 || net !== netOn || !!st.midi.pads !== padsOn || mk !== matrixKey) { matrixKey = mk; setFm1s(!!st.midi.usb_b, net, !!st.midi.pads, st.matrix || null); shownRoutes = ""; }
   if (r !== shownRoutes && Date.now() > routesDirtyUntil) { routes = JSON.parse(r); shownRoutes = r; renderMatrix(); renderEditor(); }
   if (p !== shownPresets && !String(document.activeElement && document.activeElement.id).startsWith("pn")) { shownPresets = p; renderPresets(); }
 }

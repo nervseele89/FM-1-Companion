@@ -573,11 +573,14 @@ def test_two_fm1s():
     app.on_key("press")
     assert len(app.matrix_lists()[0]) == 4                       # one FM-1: no B row
     app.midi.usb_b = "Felucca:Felucca MIDI 1 28:0"
-    no_net = lambda names: [n for n in names if n != "NET"]         # noqa: E731  (no computer on network MIDI)
+    no_net = lambda names: [n for n in names if n not in ("NET", "SMP")]   # noqa: E731  (no network MIDI, no pads)
     assert app.matrix_lists() == (no_net(midiui.blemidi.SOURCES), no_net(midiui.blemidi.DESTINATIONS))
     app.midi.net = ["Pat's Mac"]
     assert "NET" in app.matrix_lists()[0] and "NET" in app.matrix_lists()[1]
     app.midi.net = []
+    app.midi.pads = True                                               # the Studio's sampler: a destination only
+    assert "SMP" in app.matrix_lists()[1] and "SMP" not in app.matrix_lists()[0]
+    app.midi.pads = False
     app.mx = [3, 0]
     assert app.cell() == "FM-1 B>FM-1"
     snap(app, "matrix-two")
