@@ -10,6 +10,9 @@ Settings go to the box as commands (library.queue_command; the box applies them 
 Anything that writes to the FM-1's data (restore, loads, firmware) is handed to the box and waits for a
 confirmation there (hold the joystick press), never just a click on the network.
 
+Phones can add it to the home screen as an app (manifest.webmanifest and icons/, the same as the demo on
+xoxoaudiolabs.com/app/).
+
 Python's standard library only. Port: $FM1_WEB_PORT (default 80; install.sh lets the user's services use it).
 """
 import json
@@ -32,6 +35,13 @@ MAX_UPLOAD = 50 * 1024 * 1024
 EDITABLE = ("recordings", "samples")    # what the sample editor opens
 TARGETS = {"working": "the working project", "A": "project A", "B": "project B", "C": "project C",
            "D": "project D"}
+ICONS = Path(__file__).resolve().parent / "icons"    # the home-screen icons, for installing the page as an app
+MANIFEST = {"name": "FM-1 Companion", "short_name": "FM-1", "start_url": "/", "scope": "/", "display": "standalone",
+            "background_color": "#0f1115", "theme_color": "#0f1115",
+            "icons": [{"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png"},
+                      {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png"},
+                      {"src": "/icons/icon-maskable-512.png", "sizes": "512x512", "type": "image/png",
+                       "purpose": "maskable"}]}
 
 
 def safe_path(folder, name):
@@ -148,6 +158,13 @@ class Handler(BaseHTTPRequestHandler):
         query = dict(urllib.parse.parse_qsl(url.query))
         if url.path == "/":
             self.send(200, PAGE, "text/html")
+        elif url.path == "/manifest.webmanifest":           # so a phone can add the page to its home screen
+            self.send(200, json.dumps(MANIFEST).encode(), "application/manifest+json")
+        elif url.path.startswith("/icons/"):
+            path = ICONS / url.path[len("/icons/"):]
+            if path.parent != ICONS or path.suffix != ".png" or not path.is_file():
+                return self.fail("not found", 404)
+            self.send(200, path.read_bytes(), "image/png")
         elif url.path == "/api/library":
             self.send(200, library.listing())
         elif url.path == "/api/status":
@@ -345,6 +362,9 @@ PAGE = r"""<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0f1115">
 <title>FM-1 Companion</title>
+<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icons/icon-192.png"><link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes"><meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="FM-1"><meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <style>
 :root{--bg:#f4f5f7;--card:#fff;--ink:#16181d;--dim:#626875;--line:#e2e5ea;--soft:#eef0f3;--accent:#1677c9;--on:#1d8a4a;--bad:#c23a32;--rec:#d6332b}
 @media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a20;--ink:#e8eaee;--dim:#9aa1ad;--line:#2a2f38;--soft:#20242c;--accent:#5fb0ff;--on:#4cc27e;--bad:#ff6b61;--rec:#ff5a52}}
